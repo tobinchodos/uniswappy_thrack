@@ -1003,7 +1003,7 @@ class UniswapV3Exchange(IExchange, LPERC20):
             )
 
         elif (recipient in self.liquidity_providers) and (amount <= 0):
-            if self.liquidity_providers[recipient] > abs(amount):
+            if self.liquidity_providers[recipient] >= abs(amount): # changed to >= to allow complete liquidation of position 
                 self.liquidity_providers[recipient] = (
                     self.liquidity_providers[recipient] + amount
                 )
