@@ -40,6 +40,7 @@ from ...utils.tools.v3 import Position, Tick, SqrtPriceMath, LiquidityMath
 from ...utils.tools.v3 import SwapMath, TickMath, SafeMath, FullMath, UniV3Utils
 from ...utils.tools.v3 import UniV3Helper
 from ...utils.tools.v3.Position import PositionInfo
+import numpy as np
 
 MINIMUM_LIQUIDITY = 1e-15
 GWEI_PRECISION = 18
@@ -166,6 +167,8 @@ class UniswapV3Exchange(IExchange, LPERC20):
         )
         self.liquidity_providers = {}
         self.positions_for_owner = {}
+        self.token0_obj = exchg_struct.tkn0
+        self.token1_obj = exchg_struct.tkn1
 
     def summary(self):
         """summary
@@ -1278,3 +1281,33 @@ class UniswapV3Exchange(IExchange, LPERC20):
             else:
                 break
         return liquidity_at_tick
+    
+    def get_lp_inventory(self, owner, tickLower, tickUpper):
+        current_price = self.get_price(self.token0_obj)
+
+        positions = self.get_positions_for_owner(owner)
+        if len(positions) == 0:
+            return (0, 0)
+        liquidity = 0
+        
+        for position in positions:
+            if position[0] == tickLower and position[1] == tickUpper:
+                liquidity = position[2].liquidity
+                break        
+        lwr_price = 1.0001 ** position[0]
+        upr_price = 1.0001 ** position[1]
+
+        amount_0 = liquidity * (
+            1 / np.sqrt(min(max(current_price, lwr_price), upr_price))
+            - 1 / np.sqrt(upr_price)
+        )
+
+        amount_1 = liquidity * (
+            np.sqrt(max(min(current_price, upr_price), lwr_price))
+            - np.sqrt(lwr_price)
+        )
+
+        amount_0 = int(amount_0)
+        amount_1 = int(amount_1)
+
+        return (amount_0, amount_1)
