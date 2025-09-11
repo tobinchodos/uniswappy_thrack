@@ -44,6 +44,7 @@ from ...utils.tools.v3.Position import PositionInfo
 MINIMUM_LIQUIDITY = 1e-15
 GWEI_PRECISION = 18
 
+
 @dataclass
 class Slot0:
     ## the current price
@@ -53,7 +54,8 @@ class Slot0:
     ## the current protocol fee as a percentage of the swap fee taken on withdrawal
     ## represented as an integer denominator (1#x)%
     feeProtocol: int
-    
+
+
 @dataclass
 class ModifyPositionParams:
     ## the address that owns the position
@@ -62,7 +64,8 @@ class ModifyPositionParams:
     tickLower: int
     tickUpper: int
     ## any change in liquidity
-    liquidityDelta: int  
+    liquidityDelta: int
+
 
 @dataclass
 class SwapCache:
@@ -70,6 +73,7 @@ class SwapCache:
     feeProtocol: int
     ## liquidity at the beginning of the swap
     liquidityStart: int
+
 
 @dataclass
 class SwapState:
@@ -91,6 +95,7 @@ class SwapState:
     ## list of ticks crossed during the swap
     ticksCrossed: list
 
+
 @dataclass
 class StepComputations:
     ## the price at the beginning of the step
@@ -108,39 +113,43 @@ class StepComputations:
     ## how much fee is being paid in
     feeAmount: int
 
+
 @dataclass
 class ProtocolFees:
     token0: int
     token1: int
 
+
 class UniswapV3Exchange(IExchange, LPERC20):
+    """
+    Uniswap V3 Exchange
 
-    """ 
-        Uniswap V3 Exchange  
+    Parameters
+    -----------------
+    factory_struct : FactoryInit
+        Factory initialization data
+    exchg_struct : UniswapExchangeInit
+        Exchange initialization data
+    """
 
-        Parameters
-        -----------------
-        factory_struct : FactoryInit
-            Factory initialization data
-        exchg_struct : UniswapExchangeInit
-            Exchange initialization data           
-    """       
-                       
     def __init__(self, factory_struct: FactoryData, exchg_struct: UniswapExchangeData):
-        super().__init__(exchg_struct.tkn0.token_name+exchg_struct.tkn1.token_name, exchg_struct.address)
+        super().__init__(
+            exchg_struct.tkn0.token_name + exchg_struct.tkn1.token_name,
+            exchg_struct.address,
+        )
         self.version = exchg_struct.version
         self.factory = factory_struct
         self.precision = exchg_struct.precision
-        self.token0 = exchg_struct.tkn0.token_name     
-        self.token1 = exchg_struct.tkn1.token_name       
-        self.reserve0 = 0             
-        self.reserve1 = 0 
+        self.token0 = exchg_struct.tkn0.token_name
+        self.token1 = exchg_struct.tkn1.token_name
+        self.reserve0 = 0
+        self.reserve1 = 0
         self.fee = exchg_struct.fee
         self.aggr_fee0 = 0
         self.aggr_fee1 = 0
         self.collected_fee0 = 0
-        self.collected_fee1 = 0              
-        self.name =  f"{self.token0}-{self.token1}"
+        self.collected_fee1 = 0
+        self.name = f"{self.token0}-{self.token1}"
         self.symbol = exchg_struct.symbol
         self.precision = exchg_struct.precision
         self.last_liquidity_deposit = 0
@@ -149,44 +158,46 @@ class UniswapV3Exchange(IExchange, LPERC20):
         self.positions = {}
         self.ticks = {}
         self.feeGrowthGlobal0X128 = 0
-        self.feeGrowthGlobal1X128 = 0  
+        self.feeGrowthGlobal1X128 = 0
         self.protocolFees = ProtocolFees(0, 0)
         self.tickSpacing = exchg_struct.tick_spacing
-        self.maxLiquidityPerTick = Tick.tickSpacingToMaxLiquidityPerTick(self.tickSpacing)  
+        self.maxLiquidityPerTick = Tick.tickSpacingToMaxLiquidityPerTick(
+            self.tickSpacing
+        )
         self.liquidity_providers = {}
         self.positions_for_owner = {}
 
     def summary(self):
+        """summary
+        Summary print-out of exchange, reserves and liquidity
+        """
 
-        """ summary
-            Summary print-out of exchange, reserves and liquidity              
-        """         
-        
-        tokens = self.factory.token_from_exchange[self.name] 
+        tokens = self.factory.token_from_exchange[self.name]
         x_tkn = tokens[self.token0]
-        y_tkn = tokens[self.token1]          
+        y_tkn = tokens[self.token1]
         print(f"Exchange {self.name} ({self.symbol})")
-        if (self.precision == UniswapExchangeData.TYPE_GWEI):
-            print(f"Real Reserves:   {self.token0} = {self.reserve0}, {self.token1} = {self.reserve1}")
+        if self.precision == UniswapExchangeData.TYPE_GWEI:
+            print(
+                f"Real Reserves:   {self.token0} = {self.reserve0}, {self.token1} = {self.reserve1}"
+            )
             print(f"Gross Liquidity: {self.total_supply} \n")
-        else:  
+        else:
             res0 = UniV3Helper().gwei2dec(self.reserve0)
             res1 = UniV3Helper().gwei2dec(self.reserve1)
             print(f"Real Reserves:   {self.token0} = {res0}, {self.token1} = {res1}")
-            print(f"Gross Liquidity: {UniV3Helper().gwei2dec(self.total_supply)} \n")            
+            print(f"Gross Liquidity: {UniV3Helper().gwei2dec(self.total_supply)} \n")
 
     def initialize(self, sqrtPriceX96):
+        """initialize
 
-        """ initialize
+        Sets the initial price for the pool
 
-            Sets the initial price for the pool
-                
-            Parameters
-            -----------------
-            sqrtPriceX96 : float
-                the initial sqrt price of the pool as a Q64.96                     
-        """  
-        
+        Parameters
+        -----------------
+        sqrtPriceX96 : float
+            the initial sqrt price of the pool as a Q64.96
+        """
+
         checkInputTypes(uint160=(sqrtPriceX96))
         assert self.slot0.sqrtPriceX96 == 0, "UniswapV3: AI"
 
@@ -197,36 +208,35 @@ class UniswapV3Exchange(IExchange, LPERC20):
             tick,
             0,
         )
-    
-    def mint(self, recipient, tickLower, tickUpper, amount): 
 
-        """ mint
+    def mint(self, recipient, tickLower, tickUpper, amount):
+        """mint
 
-            Adds liquidity for the given recipient/tickLower/tickUpper position. The final amounts 
-            calculated are automatically transferred from the swapper to the pool and vice verse. 
-            The amount of token0/token1 due depends on tickLower, tickUpper, the amount of liquidity, 
-            and the current price.
-                
-            Parameters
-            -----------------    
-            recipient : str
-                Address for which the liquidity will be created      
-            tickLower : int
-                Lower tick of the position in which to add liquidity  
-            tickUpper : int
-                Upper tick of the position in which to add liquidity 
-            amount : int
-                Amount of liquidity to mint  
-                
-            Returns
-            -------
-            amount0 : float
-                Amount of token0 that was paid to mint the given amount of liquidity.   
-            amount1 : float
-                Amount of token1 that was paid to mint the given amount of liquidity.                   
-        """          
+        Adds liquidity for the given recipient/tickLower/tickUpper position. The final amounts
+        calculated are automatically transferred from the swapper to the pool and vice verse.
+        The amount of token0/token1 due depends on tickLower, tickUpper, the amount of liquidity,
+        and the current price.
+
+        Parameters
+        -----------------
+        recipient : str
+            Address for which the liquidity will be created
+        tickLower : int
+            Lower tick of the position in which to add liquidity
+        tickUpper : int
+            Upper tick of the position in which to add liquidity
+        amount : int
+            Amount of liquidity to mint
+
+        Returns
+        -------
+        amount0 : float
+            Amount of token0 that was paid to mint the given amount of liquidity.
+        amount1 : float
+            Amount of token1 that was paid to mint the given amount of liquidity.
+        """
         amount = self.convert_to_machine(amount)
-        
+
         checkInputTypes(
             accounts=(recipient), int24=(tickLower, tickUpper), uint128=(amount)
         )
@@ -239,64 +249,70 @@ class UniswapV3Exchange(IExchange, LPERC20):
 
         amount0 = toUint256(abs(amount0Int))
         amount1 = toUint256(abs(amount1Int))
-        
+
         tokens = self.factory.token_from_exchange[self.name]
-        assert tokens.get(self.token0) and tokens.get(self.token1), 'UniswapV3: TOKEN_UNAVAILABLE' 
+        assert tokens.get(self.token0) and tokens.get(
+            self.token1
+        ), "UniswapV3: TOKEN_UNAVAILABLE"
 
         balance0Before = tokens.get(self.token0).token_total
-        balance1Before = tokens.get(self.token1).token_total 
-        
+        balance1Before = tokens.get(self.token1).token_total
+
         tokens.get(self.token0).deposit(recipient, amount0)
-        tokens.get(self.token1).deposit(recipient, amount1)  
+        tokens.get(self.token1).deposit(recipient, amount1)
 
         balanceA = tokens.get(self.token0).token_total
         balanceB = tokens.get(self.token1).token_total
 
         self._update(balanceA, balanceB)
-    
-        assert balance0Before + amount0 <= tokens.get(self.token0).token_total, 'UniswapV3: M0' 
-        assert balance1Before + amount1 <= tokens.get(self.token1).token_total, 'UniswapV3: M0' 
- 
+
+        assert (
+            balance0Before + amount0 <= tokens.get(self.token0).token_total
+        ), "UniswapV3: M0"
+        assert (
+            balance1Before + amount1 <= tokens.get(self.token1).token_total
+        ), "UniswapV3: M0"
+
         amount0 = self.convert_to_human(amount0)
-        amount1 = self.convert_to_human(amount1)        
-              
+        amount1 = self.convert_to_human(amount1)
+
         return (amount0, amount1)
-        
 
-    def collect(self, recipient, tickLower, tickUpper, amount0Requested, amount1Requested):
+    def collect(
+        self, recipient, tickLower, tickUpper, amount0Requested, amount1Requested
+    ):
+        """collect
 
-        """ collect
+        Collects tokens owed to a position. Does not recompute fees earned, which must be done either
+        via mint or burn of any amount of liquidity. Collect must be called by the position owner.
+        To withdraw only token0 or only token1, amount0Requested or amount1Requested may be set to zero.
+        To withdraw all tokens owed, caller may pass any value greater than the actual tokens owed, e.g.
+        type(uint128).max. Tokens owed may be from accumulated swap fees or burned liquidity.
 
-            Collects tokens owed to a position. Does not recompute fees earned, which must be done either 
-            via mint or burn of any amount of liquidity. Collect must be called by the position owner. 
-            To withdraw only token0 or only token1, amount0Requested or amount1Requested may be set to zero. 
-            To withdraw all tokens owed, caller may pass any value greater than the actual tokens owed, e.g. 
-            type(uint128).max. Tokens owed may be from accumulated swap fees or burned liquidity.
-                
-            Parameters
-            -----------------    
-            recipient : str
-                Address for which the liquidity will be created      
-            tickLower : int
-                Lower tick of the position in which to add liquidity  
-            tickUpper : int
-                Lower tick of the position in which to add liquidity                 
-            amount0Requested : int
-                How much token0 should be withdrawn from the fees owed
-            amount1Requested : int
-                How much token1 should be withdrawn from the fees owed  
-                
-            Returns
-            -------
-            amount0 : float
-                Amount of token0 that was paid to mint the given amount of liquidity.   
-            amount1 : float
-                Amount of token1 that was paid to mint the given amount of liquidity.                   
-        """ 
+        Parameters
+        -----------------
+        recipient : str
+            Address for which the liquidity will be created
+        tickLower : int
+            Lower tick of the position in which to add liquidity
+        tickUpper : int
+            Lower tick of the position in which to add liquidity
+        amount0Requested : int
+            How much token0 should be withdrawn from the fees owed
+        amount1Requested : int
+            How much token1 should be withdrawn from the fees owed
+
+        Returns
+        -------
+        amount0 : float
+            Amount of token0 that was paid to mint the given amount of liquidity.
+        amount1 : float
+            Amount of token1 that was paid to mint the given amount of liquidity.
+        """
 
         amount0Requested = self.convert_to_machine(amount0Requested)
         amount1Requested = self.convert_to_machine(amount1Requested)
-        
+
         checkInputTypes(
             accounts=(recipient),
             int24=(tickLower, tickUpper),
@@ -319,55 +335,55 @@ class UniswapV3Exchange(IExchange, LPERC20):
         )
 
         tokens = self.factory.token_from_exchange[self.name]
-        assert tokens.get(self.token0) and tokens.get(self.token1), 'UniswapV3: TOKEN_UNAVAILABLE' 
-        
+        assert tokens.get(self.token0) and tokens.get(
+            self.token1
+        ), "UniswapV3: TOKEN_UNAVAILABLE"
+
         if amount0 > 0:
             position.tokensOwed0 -= amount0
             tokens.get(self.token0).deposit(recipient, amount0)
-            #self.ledger.transferToken(self, recipient, self.token0, amount0)
+            # self.ledger.transferToken(self, recipient, self.token0, amount0)
         if amount1 > 0:
             position.tokensOwed1 -= amount1
-            tokens.get(self.token1).deposit(recipient, amount1) 
-            #self.ledger.transferToken(self, recipient, self.token1, amount1)
-  
-        amount0 = self.convert_to_human(amount0)
-        amount1 = self.convert_to_human(amount1)        
+            tokens.get(self.token1).deposit(recipient, amount1)
+            # self.ledger.transferToken(self, recipient, self.token1, amount1)
 
-        return (recipient, tickLower, tickUpper, amount0, amount1)   
-        
+        amount0 = self.convert_to_human(amount0)
+        amount1 = self.convert_to_human(amount1)
+
+        return (recipient, tickLower, tickUpper, amount0, amount1)
 
     def burn(self, recipient, tickLower, tickUpper, amount):
+        """burn
 
-        """ burn
+        Burn liquidity from the sender and account tokens owed for the liquidity to the position. Can
+        be used to trigger a recalculation of fees owed to a position by calling with an amount of 0.
+        Fees must be collected separately via a call to collect
 
-            Burn liquidity from the sender and account tokens owed for the liquidity to the position. Can 
-            be used to trigger a recalculation of fees owed to a position by calling with an amount of 0. 
-            Fees must be collected separately via a call to collect
-                
-            Parameters
-            -----------------    
-            recipient : str
-                Address for which the liquidity will be created      
-            tickLower : int
-                Lower tick of the position in which to add liquidity  
-            tickUpper : int
-                Upper tick of the position in which to add liquidity                 
-            amount : int
-                How much liquidity to burn
-                
-            Returns
-            -------
-            recipient : str
-                Address for which the liquidity will be created 
-            amount0 : int
-                Delta of the balance of token0 of the pool, exact when negative, minimum when positive
-            amount1 : int
-                Delta of the balance of token1 of the pool, exact when negative, minimum when positive               
-            amount : int
-                How much liquidity to burn                  
-        """  
+        Parameters
+        -----------------
+        recipient : str
+            Address for which the liquidity will be created
+        tickLower : int
+            Lower tick of the position in which to add liquidity
+        tickUpper : int
+            Upper tick of the position in which to add liquidity
+        amount : int
+            How much liquidity to burn
+
+        Returns
+        -------
+        recipient : str
+            Address for which the liquidity will be created
+        amount0 : int
+            Delta of the balance of token0 of the pool, exact when negative, minimum when positive
+        amount1 : int
+            Delta of the balance of token1 of the pool, exact when negative, minimum when positive
+        amount : int
+            How much liquidity to burn
+        """
         amount = self.convert_to_machine(amount)
-        
+
         checkInputTypes(
             accounts=(recipient), int24=(tickLower, tickUpper), uint128=(amount)
         )
@@ -381,160 +397,163 @@ class UniswapV3Exchange(IExchange, LPERC20):
             ModifyPositionParams(recipient, tickLower, tickUpper, -amount)
         )
         self._update_provider_liquidity(recipient, -amount)
-        
+
         tokens = self.factory.token_from_exchange[self.name]
         tokens.get(self.token0).deposit(recipient, amount0Int)
-        tokens.get(self.token1).deposit(recipient, amount1Int)     
+        tokens.get(self.token1).deposit(recipient, amount1Int)
 
         balanceA = tokens.get(self.token0).token_total
         balanceB = tokens.get(self.token1).token_total
 
-        self._update(balanceA, balanceB)        
+        self._update(balanceA, balanceB)
 
         # Mimic conversion to uint256
         amount0 = abs(-amount0Int) & (2**256 - 1)
-        amount1 = abs(-amount1Int) & (2**256 - 1)        
+        amount1 = abs(-amount1Int) & (2**256 - 1)
 
         if amount0 > 0 or amount1 > 0:
             position.tokensOwed0 += amount0
             position.tokensOwed1 += amount1
 
-        amount = self.convert_to_human(amount)   
+        amount = self.convert_to_human(amount)
         amount0 = self.convert_to_human(amount0)
         amount1 = self.convert_to_human(amount1)
-             
+
         return (recipient, tickLower, tickUpper, amount, amount0, amount1)
 
-
-
     def swapExact0For1(self, recipient, amount, sqrtPriceLimit):
+        """swapExact0For1
 
-        """ swapExact0For1
+        Swap exact value of token0 for token1
 
-            Swap exact value of token0 for token1
-                
-            Parameters
-            -----------------    
-            recipient : str
-                Address for which the liquidity will be created      
-            amount : int
-                How much token to swap
-            sqrtPriceLimit : int
-                Used to determine the highest price in the swap, and needs to be set when swapping on 
-                the pool directly.       
-                
-            Returns
-            -------
-            recipient : str
-                Address for which the liquidity will be created 
-            amount0 : int
-                Delta of the balance of token0 of the pool, exact when negative, minimum when positive
-            amount1 : int
-                Delta of the balance of token1 of the pool, exact when negative, minimum when positive                             
-        """         
+        Parameters
+        -----------------
+        recipient : str
+            Address for which the liquidity will be created
+        amount : int
+            How much token to swap
+        sqrtPriceLimit : int
+            Used to determine the highest price in the swap, and needs to be set when swapping on
+            the pool directly.
+
+        Returns
+        -------
+        recipient : str
+            Address for which the liquidity will be created
+        amount0 : int
+            Delta of the balance of token0 of the pool, exact when negative, minimum when positive
+        amount1 : int
+            Delta of the balance of token1 of the pool, exact when negative, minimum when positive
+        """
         amount = self.convert_to_machine(amount)
         sqrtPriceLimitX96 = (
             sqrtPriceLimit
             if sqrtPriceLimit != None
-            else UniV3Utils.getSqrtPriceLimitX96('Token0')
+            else UniV3Utils.getSqrtPriceLimitX96("Token0")
         )
 
-        return self._swap(UniV3Utils.TEST_TOKENS[0], [amount, 0], recipient, sqrtPriceLimitX96)  
+        return self._swap(
+            UniV3Utils.TEST_TOKENS[0], [amount, 0], recipient, sqrtPriceLimitX96
+        )
 
-    def swap0ForExact1(self, recipient,  amount, sqrtPriceLimit):
+    def swap0ForExact1(self, recipient, amount, sqrtPriceLimit):
+        """swapExact0For1
 
-        """ swapExact0For1
+        Swap token0 for exact value of token1
 
-            Swap token0 for exact value of token1
-                
-            Parameters
-            -----------------    
-            recipient : str
-                Address for which the liquidity will be created      
-            amount : int
-                How much token to swap
-            sqrtPriceLimit : int
-                Used to determine the highest price in the swap, and needs to be set when swapping 
-                on the pool directly.       
-                
-            Returns
-            -------
-            recipient : str
-                Address for which the liquidity will be created 
-            amount0 : int
-                Delta of the balance of token0 of the pool, exact when negative, minimum when positive
-            amount1 : int
-                Delta of the balance of token1 of the pool, exact when negative, minimum when positive                             
-        """           
-        
+        Parameters
+        -----------------
+        recipient : str
+            Address for which the liquidity will be created
+        amount : int
+            How much token to swap
+        sqrtPriceLimit : int
+            Used to determine the highest price in the swap, and needs to be set when swapping
+            on the pool directly.
+
+        Returns
+        -------
+        recipient : str
+            Address for which the liquidity will be created
+        amount0 : int
+            Delta of the balance of token0 of the pool, exact when negative, minimum when positive
+        amount1 : int
+            Delta of the balance of token1 of the pool, exact when negative, minimum when positive
+        """
+
         amount = self.convert_to_machine(amount)
         sqrtPriceLimitX96 = (
             sqrtPriceLimit
             if sqrtPriceLimit != None
             else UniV3Utils.getSqrtPriceLimitX96(UniV3Utils.TEST_TOKENS[0])
         )
-        return self._swap(UniV3Utils.TEST_TOKENS[0], [0, amount], recipient, sqrtPriceLimitX96)  
+        return self._swap(
+            UniV3Utils.TEST_TOKENS[0], [0, amount], recipient, sqrtPriceLimitX96
+        )
 
+    def swapExact1For0(self, recipient, amount, sqrtPriceLimit):
+        """swapExact0For1
 
-    def swapExact1For0(self, recipient,  amount, sqrtPriceLimit):
+        Swap exact value of token1 for token0
 
-        """ swapExact0For1
+        Parameters
+        -----------------
+        recipient : str
+            Address for which the liquidity will be created
+        amount : int
+            How much token to swap
+        sqrtPriceLimit : int
+            Used to determine the highest price in the swap, and needs to be set when swapping
+            on the pool directly.
 
-            Swap exact value of token1 for token0
-                
-            Parameters
-            -----------------    
-            recipient : str
-                Address for which the liquidity will be created      
-            amount : int
-                How much token to swap
-            sqrtPriceLimit : int
-                Used to determine the highest price in the swap, and needs to be set when swapping 
-                on the pool directly.       
-                
-            Returns
-            -------
-            recipient : str
-                Address for which the liquidity will be created 
-            amount0 : int
-                Delta of the balance of token0 of the pool, exact when negative, minimum when positive
-            amount1 : int
-                Delta of the balance of token1 of the pool, exact when negative, minimum when positive                             
-        """          
-        
-        amount = amount if self.precision == UniswapExchangeData.TYPE_GWEI else UniV3Helper().dec2gwei(amount)
+        Returns
+        -------
+        recipient : str
+            Address for which the liquidity will be created
+        amount0 : int
+            Delta of the balance of token0 of the pool, exact when negative, minimum when positive
+        amount1 : int
+            Delta of the balance of token1 of the pool, exact when negative, minimum when positive
+        """
+
+        amount = (
+            amount
+            if self.precision == UniswapExchangeData.TYPE_GWEI
+            else UniV3Helper().dec2gwei(amount)
+        )
         sqrtPriceLimitX96 = (
             sqrtPriceLimit
             if sqrtPriceLimit != None
             else UniV3Utils.getSqrtPriceLimitX96(UniV3Utils.TEST_TOKENS[1])
         )
-        return self._swap(UniV3Utils.TEST_TOKENS[1], [amount, 0], recipient, sqrtPriceLimitX96)
-    
+        return self._swap(
+            UniV3Utils.TEST_TOKENS[1], [amount, 0], recipient, sqrtPriceLimitX96
+        )
+
     def swap1ForExact0(self, recipient, amount, sqrtPriceLimit):
+        """swapExact0For1
 
-        """ swapExact0For1
+        Swap token1 for exact value of token0
 
-            Swap token1 for exact value of token0
-                
-            Parameters
-            -----------------    
-            recipient : str
-                Address for which the liquidity will be created      
-            amount : int
-                How much token to swap
-            sqrtPriceLimit : int
-                Used to determine the highest price in the swap, and needs to be set when swapping 
-                on the pool directly.       
-                
-            Returns
-            -------
-            recipient : str
-                Address for which the liquidity will be created 
-            amount0 : int
-                Delta of the balance of token0 of the pool, exact when negative, minimum when positive
-            amount1 : int
-                Delta of the balance of token1 of the pool, exact when negative, minimum when positive                             
-        """         
+        Parameters
+        -----------------
+        recipient : str
+            Address for which the liquidity will be created
+        amount : int
+            How much token to swap
+        sqrtPriceLimit : int
+            Used to determine the highest price in the swap, and needs to be set when swapping
+            on the pool directly.
+
+        Returns
+        -------
+        recipient : str
+            Address for which the liquidity will be created
+        amount0 : int
+            Delta of the balance of token0 of the pool, exact when negative, minimum when positive
+        amount1 : int
+            Delta of the balance of token1 of the pool, exact when negative, minimum when positive
+        """
 
         amount = self.convert_to_machine(amount)
         sqrtPriceLimitX96 = (
@@ -542,39 +561,40 @@ class UniswapV3Exchange(IExchange, LPERC20):
             if sqrtPriceLimit != None
             else UniV3Utils.getSqrtPriceLimitX96(UniV3Utils.TEST_TOKENS[1])
         )
-        return self._swap(UniV3Utils.TEST_TOKENS[1], [0, amount], recipient, sqrtPriceLimitX96)     
+        return self._swap(
+            UniV3Utils.TEST_TOKENS[1], [0, amount], recipient, sqrtPriceLimitX96
+        )
 
     def swap(self, recipient, zeroForOne, amountSpecified, sqrtPriceLimitX96):
+        """swap
 
-        """ swap
+        Swap token0 for token1, or token1 for token0. The tokens are automatically transferred
+        at the end of the swapping function.
 
-            Swap token0 for token1, or token1 for token0. The tokens are automatically transferred 
-            at the end of the swapping function.
-                
-            Parameters
-            -----------------    
-            recipient : str
-                Address for which the liquidity will be created      
-            zeroForOne : int
-                the direction of the swap, true for token0 to token1, false for token1 to token0 
-            amountSpecified : int
-                The amount of the swap, which implicitly configures the swap as exact input 
-                (positive), or exact output (negative)        
-            sqrtPriceLimitX96 : int
-                The Q64.96 sqrt price limit. If zero for one, the price cannot be less than this 
-                value after the swap. If one for zero, the price cannot be greater than this 
-                value after the swap
-                
-            Returns
-            -------
-            recipient : str
-                Address for which the liquidity will be created 
-            amount0 : int
-                Delta of the balance of token0 of the pool, exact when negative, minimum when positive
-            amount1 : int
-                Delta of the balance of token1 of the pool, exact when negative, minimum when positive                             
-        """ 
-        
+        Parameters
+        -----------------
+        recipient : str
+            Address for which the liquidity will be created
+        zeroForOne : int
+            the direction of the swap, true for token0 to token1, false for token1 to token0
+        amountSpecified : int
+            The amount of the swap, which implicitly configures the swap as exact input
+            (positive), or exact output (negative)
+        sqrtPriceLimitX96 : int
+            The Q64.96 sqrt price limit. If zero for one, the price cannot be less than this
+            value after the swap. If one for zero, the price cannot be greater than this
+            value after the swap
+
+        Returns
+        -------
+        recipient : str
+            Address for which the liquidity will be created
+        amount0 : int
+            Delta of the balance of token0 of the pool, exact when negative, minimum when positive
+        amount1 : int
+            Delta of the balance of token1 of the pool, exact when negative, minimum when positive
+        """
+
         checkInputTypes(
             accounts=(recipient),
             bool=(zeroForOne),
@@ -583,8 +603,8 @@ class UniswapV3Exchange(IExchange, LPERC20):
         )
         assert amountSpecified != 0, "UniswapV3: AS"
 
-        slot0Start = self.slot0        
-        
+        slot0Start = self.slot0
+
         if zeroForOne:
             assert (
                 sqrtPriceLimitX96 < slot0Start.sqrtPriceX96
@@ -595,14 +615,14 @@ class UniswapV3Exchange(IExchange, LPERC20):
                 sqrtPriceLimitX96 > slot0Start.sqrtPriceX96
                 and sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO
             ), "UniswapV3: ONEFORZERO SPL"
-  
+
         feeProtocol = (
             (slot0Start.feeProtocol % 16)
             if zeroForOne
             else (slot0Start.feeProtocol >> 4)
         )
 
-        cache = SwapCache(feeProtocol, self.total_supply)
+        cache = SwapCache(feeProtocol, self.get_liquidity_at_tick())
 
         exactInput = amountSpecified > 0
 
@@ -689,12 +709,16 @@ class UniswapV3Exchange(IExchange, LPERC20):
                     liquidityNet = Tick.cross(
                         self.ticks,
                         step.tickNext,
-                        state.feeGrowthGlobalX128
-                        if zeroForOne
-                        else self.feeGrowthGlobal0X128,
-                        self.feeGrowthGlobal1X128
-                        if zeroForOne
-                        else state.feeGrowthGlobalX128,
+                        (
+                            state.feeGrowthGlobalX128
+                            if zeroForOne
+                            else self.feeGrowthGlobal0X128
+                        ),
+                        (
+                            self.feeGrowthGlobal1X128
+                            if zeroForOne
+                            else state.feeGrowthGlobalX128
+                        ),
                     )
                     ## if we're moving leftward, we interpret liquidityNet as the opposite sign
                     ## safe because liquidityNet cannot be type(int128).min
@@ -743,20 +767,20 @@ class UniswapV3Exchange(IExchange, LPERC20):
                 amountSpecified - state.amountSpecifiedRemaining,
             )
         )
-        
+
         tokens = self.factory.token_from_exchange[self.name]
-        if zeroForOne: 
+        if zeroForOne:
             tokens.get(self.token0).deposit(recipient, abs(amount0))
-            self._swap_tokens(0, abs(amount1), recipient)            
-        else: 
+            self._swap_tokens(0, abs(amount1), recipient)
+        else:
             tokens.get(self.token1).deposit(recipient, abs(amount1))
-            self._swap_tokens(abs(amount0), 0, recipient)            
+            self._swap_tokens(abs(amount0), 0, recipient)
 
         amount0 = self.convert_to_human(amount0)
         amount1 = self.convert_to_human(amount1)
         liquidity = self.convert_to_human(state.liquidity)
         self._update_fees()
-        
+
         return (
             recipient,
             amount0,
@@ -767,19 +791,18 @@ class UniswapV3Exchange(IExchange, LPERC20):
         )
 
     def setFeeProtocol(self, feeProtocol0, feeProtocol1):
+        """setFeeProtocol
 
-        """ setFeeProtocol
+        Set the denominator of the protocol's % share of the fees
 
-            Set the denominator of the protocol's % share of the fees
-            
-            Parameters
-            -----------------    
-            feeProtocol0 : int
-                New protocol fee for token0 of the pool      
-            feeProtocol1 : int
-                New protocol fee for token1 of the pool                        
-        """ 
-        
+        Parameters
+        -----------------
+        feeProtocol0 : int
+            New protocol fee for token0 of the pool
+        feeProtocol1 : int
+            New protocol fee for token1 of the pool
+        """
+
         checkInputTypes(uint8=(feeProtocol0, feeProtocol1))
         assert (feeProtocol0 == 0 or (feeProtocol0 >= 4 and feeProtocol0 <= 10)) and (
             feeProtocol1 == 0 or (feeProtocol1 >= 4 and feeProtocol1 <= 10)
@@ -793,47 +816,45 @@ class UniswapV3Exchange(IExchange, LPERC20):
         return (feeProtocolOld % 16, feeProtocolOld >> 4, feeProtocol0, feeProtocol1)
 
     def checkTicks(self, tickLower, tickUpper):
+        """checkTicks
 
-        """ checkTicks
+        Common checks for valid tick inputs
 
-            Common checks for valid tick inputs
-            
-            Parameters
-            -----------------    
-            tickLower : int
-                Lower tick of the position in which to add liquidity  
-            tickUpper : int
-                Lower tick of the position in which to add liquidity                    
-        """ 
-        
+        Parameters
+        -----------------
+        tickLower : int
+            Lower tick of the position in which to add liquidity
+        tickUpper : int
+            Lower tick of the position in which to add liquidity
+        """
+
         checkInputTypes(int24=(tickLower, tickUpper))
         assert tickLower < tickUpper, "UniswapV3: TLU"
         assert tickLower >= TickMath.MIN_TICK, "UniswapV3: TLM"
-        assert tickUpper <= TickMath.MAX_TICK, "UniswapV3: TUM"        
+        assert tickUpper <= TickMath.MAX_TICK, "UniswapV3: TUM"
 
     def nextTick(self, tick, lte):
+        """nextTick
 
-        """ nextTick
+        It is assumed that the keys are within [MIN_TICK , MAX_TICK], which should always be the
+        case. We don't run the risk of overshooting tickNext (out of boundaries) as long as ticks
+        (keys) have been initialized within the boundaries. However, if there is no initialized
+        tick to the left or right we will return the next boundary. Then we need to return the
+        initialized bool to indicate that we are at the boundary and it is not an initalized tick.
 
-            It is assumed that the keys are within [MIN_TICK , MAX_TICK], which should always be the 
-            case. We don't run the risk of overshooting tickNext (out of boundaries) as long as ticks 
-            (keys) have been initialized within the boundaries. However, if there is no initialized 
-            tick to the left or right we will return the next boundary. Then we need to return the 
-            initialized bool to indicate that we are at the boundary and it is not an initalized tick.
-            
-            Parameters
-            -----------------    
-            tick : int
-                The starting tick    
-            lte : int
-                Whether to search for the next initialized tick to the left (less than or equal to the starting tick)
-                
-            Returns
-            -------
-            nextTick : int
-                Next tick with liquidity to be used in the swap function                      
-        """ 
-        
+        Parameters
+        -----------------
+        tick : int
+            The starting tick
+        lte : int
+            Whether to search for the next initialized tick to the left (less than or equal to the starting tick)
+
+        Returns
+        -------
+        nextTick : int
+            Next tick with liquidity to be used in the swap function
+        """
+
         checkInputTypes(int24=(tick), bool=(lte))
 
         keyList = list(self.ticks.keys())
@@ -862,147 +883,150 @@ class UniswapV3Exchange(IExchange, LPERC20):
             nextTick = sortedKeyList[indexCurrentTick + 1]
 
         # Return tick within the boundaries
-        return nextTick, True  
+        return nextTick, True
 
-    def get_price(self, token):  
-        
-        """ get_price
+    def get_price(self, token):
+        """get_price
 
-            Get price of select token in the exchange pair
-                
-            Parameters
-            -----------------
-            token : ERC20
-                ERC20 token                
-        """          
-        sqrt_P = self.slot0.sqrtPriceX96/2**96
-        
-        if(token.token_name == self.token0):
-            if(self.reserve0 == 0):
-                return None 
-            else:
-                return sqrt_P**2 
-        elif(token.token_name == self.token1):
-            if(self.reserve1 == 0):
+        Get price of select token in the exchange pair
+
+        Parameters
+        -----------------
+        token : ERC20
+            ERC20 token
+        """
+        sqrt_P = self.slot0.sqrtPriceX96 / 2**96
+
+        if token.token_name == self.token0:
+            if self.reserve0 == 0:
                 return None
             else:
-                return 1/sqrt_P**2 
+                return sqrt_P**2
+        elif token.token_name == self.token1:
+            if self.reserve1 == 0:
+                return None
+            else:
+                return 1 / sqrt_P**2
         else:
-            assert False, 'UniswapV2: WRONG_INPUT_TOKEN'   
+            assert False, "UniswapV2: WRONG_INPUT_TOKEN"
 
+    def get_last_liquidity_deposit(self):
+        """get_last_liquidity_deposit
 
-    def get_last_liquidity_deposit(self):  
-        
-        """ get_last_liquidity_deposit
+        Get the last liquidity deposit that went into pool
+        """
 
-            Get the last liquidity deposit that went into pool         
-        """          
+        return self.last_liquidity_deposit
 
-        return self.last_liquidity_deposit    
+    def get_liquidity_from_provider(self, provider_account):
+        """get_liquidity_from_provider
 
+        Get liquidity from provider
 
-    def get_liquidity_from_provider(self, provider_account):  
-        
-        """ get_liquidity_from_provider
+        Parameters
+        -----------------
+        provider_account : str
+            Provider account name
 
-            Get liquidity from provider  
-            
-            Parameters
-            -----------------
-            provider_account : str
-                Provider account name  
-            
-        """          
+        """
 
-        return self.convert_to_human(self.liquidity_providers[provider_account])     
-    
-                  
-    def get_liquidity(self):  
-        
-        """ get_liquidity
+        return self.convert_to_human(self.liquidity_providers[provider_account])
 
-            Get liquidity of exchange pool         
-        """          
+    def get_liquidity(self):
+        """get_liquidity
 
-        return self.convert_to_human(self.total_supply)         
-            
-    def get_reserve(self, token):  
-        
-        """ get_reserve
+        Get liquidity of exchange pool
+        """
 
-            Get reserve amount of select token in the exchange pair
-                
-            Parameters
-            -----------------
-            token : ERC20
-                ERC20 token                
-        """         
-        
-        if(token.token_name == self.token0):
+        return self.convert_to_human(self.total_supply)
+
+    def get_reserve(self, token):
+        """get_reserve
+
+        Get reserve amount of select token in the exchange pair
+
+        Parameters
+        -----------------
+        token : ERC20
+            ERC20 token
+        """
+
+        if token.token_name == self.token0:
             return self.convert_to_human(self.reserve0)
-        elif(token.token_name == self.token1):
-            return self.convert_to_human(self.reserve1) 
+        elif token.token_name == self.token1:
+            return self.convert_to_human(self.reserve1)
         else:
-            assert False, 'UniswapV3: WRONG_INPUT_TOKEN'      
+            assert False, "UniswapV3: WRONG_INPUT_TOKEN"
 
-    def get_virtual_reserve(self, token):  
-        
-        """ get_virtual_reserve
+    def get_virtual_reserve(self, token):
+        """get_virtual_reserve
 
-            Get virtual reserve amount of select token in the exchange pair
-                
-            Parameters
-            -----------------
-            token : ERC20
-                ERC20 token                
-        """         
-        
-        sqrt_P = self.slot0.sqrtPriceX96/2**96
+        Get virtual reserve amount of select token in the exchange pair
+
+        Parameters
+        -----------------
+        token : ERC20
+            ERC20 token
+        """
+
+        sqrt_P = self.slot0.sqrtPriceX96 / 2**96
         liq = self.get_liquidity()
-        
-        if(token.token_name == self.token0):
-            return liq/sqrt_P
-        elif(token.token_name == self.token1):
-            return liq*sqrt_P
-        else:
-            assert False, 'UniswapV3: WRONG_INPUT_TOKEN'           
 
-    def convert_to_human(self, val): 
-        val = val if self.precision == UniswapExchangeData.TYPE_GWEI else UniV3Helper().gwei2dec(val)
+        if token.token_name == self.token0:
+            return liq / sqrt_P
+        elif token.token_name == self.token1:
+            return liq * sqrt_P
+        else:
+            assert False, "UniswapV3: WRONG_INPUT_TOKEN"
+
+    def convert_to_human(self, val):
+        val = (
+            val
+            if self.precision == UniswapExchangeData.TYPE_GWEI
+            else UniV3Helper().gwei2dec(val)
+        )
         return val
 
-    def convert_to_machine(self, val): 
-        val = int(val) if self.precision == UniswapExchangeData.TYPE_GWEI else UniV3Helper().dec2gwei(val)
-        return val   
+    def convert_to_machine(self, val):
+        val = (
+            int(val)
+            if self.precision == UniswapExchangeData.TYPE_GWEI
+            else UniV3Helper().dec2gwei(val)
+        )
+        return val
 
     def _update_provider_liquidity(self, recipient, amount):
 
-        if((recipient in self.liquidity_providers) and (amount > 0)):
-            self.liquidity_providers[recipient] = self.liquidity_providers[recipient] + amount
-            
-        elif((recipient in self.liquidity_providers) and (amount <= 0)):
-            if(self.liquidity_providers[recipient] > abs(amount)):   
-                self.liquidity_providers[recipient] = self.liquidity_providers[recipient] + amount
+        if (recipient in self.liquidity_providers) and (amount > 0):
+            self.liquidity_providers[recipient] = (
+                self.liquidity_providers[recipient] + amount
+            )
+
+        elif (recipient in self.liquidity_providers) and (amount <= 0):
+            if self.liquidity_providers[recipient] > abs(amount):
+                self.liquidity_providers[recipient] = (
+                    self.liquidity_providers[recipient] + amount
+                )
             else:
-                assert False, 'UniswapV3: INSUFFICIENT_SUBTRACT_AMOUNT' 
-                
-        elif((recipient not in self.liquidity_providers) and (amount > 0)):  
+                assert False, "UniswapV3: INSUFFICIENT_SUBTRACT_AMOUNT"
+
+        elif (recipient not in self.liquidity_providers) and (amount > 0):
             self.liquidity_providers[recipient] = amount
-            
-        elif((recipient not in self.liquidity_providers) and (amount <= 0)):
-            assert False, 'UniswapV3: INSUFFICIENT_ADD_AMOUNT'     
-            
-    def _update_fees(self): 
+
+        elif (recipient not in self.liquidity_providers) and (amount <= 0):
+            assert False, "UniswapV3: INSUFFICIENT_ADD_AMOUNT"
+
+    def _update_fees(self):
         liquidity = UniV3Helper().gwei2dec(self.total_supply)
-        self.collected_fee0 = liquidity*self.feeGrowthGlobal0X128/2**128
-        self.collected_fee1 = liquidity*self.feeGrowthGlobal1X128/2**128
-    
+        self.collected_fee0 = liquidity * self.feeGrowthGlobal0X128 / 2**128
+        self.collected_fee1 = liquidity * self.feeGrowthGlobal1X128 / 2**128
+
     def _swap(self, inputToken, amounts, recipient, sqrtPriceLimitX96):
         [amountIn, amountOut] = amounts
         exactInput = amountOut == 0
         amount = amountIn if exactInput else amountOut
 
-        if inputToken == 'Token0':
+        if inputToken == "Token0":
             if exactInput:
                 checkInt128(amount)
                 return self.swap(recipient, True, amount, sqrtPriceLimitX96)
@@ -1012,66 +1036,78 @@ class UniswapV3Exchange(IExchange, LPERC20):
         else:
             if exactInput:
                 checkInt128(amount)
-                return self.swap(recipient, False, amount, sqrtPriceLimitX96)                  
+                return self.swap(recipient, False, amount, sqrtPriceLimitX96)
             else:
                 checkInt128(-amount)
-                return self.swap(recipient, False, -amount, sqrtPriceLimitX96)      
-    
-    def _swap_tokens(self, amountA_out, amountB_out, to_addr):
-        
-        """ _swap_tokens
+                return self.swap(recipient, False, -amount, sqrtPriceLimitX96)
 
-            Remove liquidity from both coins in the pair based on lp amount
-                
-            Parameters
-            -----------------
-            amountA_out : float
-                Swap amountA out
-            amountB_out : float
-                Swap amountB out               
-            to_addr : str
-                Receiving user address                   
-        """         
-        
-        assert amountA_out > 0 or amountB_out > 0, 'UniswapV3: INSUFFICIENT_OUTPUT_AMOUNT'
-        assert amountA_out <= self.reserve0 and amountB_out <= self.reserve1, 'UniswapV3: INSUFFICIENT_LIQUIDITY'
+    def _swap_tokens(self, amountA_out, amountB_out, to_addr):
+        """_swap_tokens
+
+        Remove liquidity from both coins in the pair based on lp amount
+
+        Parameters
+        -----------------
+        amountA_out : float
+            Swap amountA out
+        amountB_out : float
+            Swap amountB out
+        to_addr : str
+            Receiving user address
+        """
+
+        assert (
+            amountA_out > 0 or amountB_out > 0
+        ), "UniswapV3: INSUFFICIENT_OUTPUT_AMOUNT"
+        assert (
+            amountA_out <= self.reserve0 and amountB_out <= self.reserve1
+        ), "UniswapV3: INSUFFICIENT_LIQUIDITY"
 
         tokens = self.factory.token_from_exchange[self.name]
-        assert tokens.get(self.token0).token_addr != to_addr, 'UniswapV3: INVALID_TO_ADDRESS'
-        assert tokens.get(self.token1).token_addr != to_addr, 'UniswapV3: INVALID_TO_ADDRESS'
-        
+        assert (
+            tokens.get(self.token0).token_addr != to_addr
+        ), "UniswapV3: INVALID_TO_ADDRESS"
+        assert (
+            tokens.get(self.token1).token_addr != to_addr
+        ), "UniswapV3: INVALID_TO_ADDRESS"
+
         tokens.get(self.token0).transfer(to_addr, amountA_out)
-        tokens.get(self.token1).transfer(to_addr, amountB_out)    
-        
+        tokens.get(self.token1).transfer(to_addr, amountB_out)
+
         balanceA = tokens.get(self.token0).token_total
         balanceB = tokens.get(self.token1).token_total
 
-        amountA_in = balanceA - (self.reserve0 - amountA_out) if balanceA > self.reserve0 - amountA_out else 0
-        amountB_in = balanceB - (self.reserve1 - amountB_out) if balanceB > self.reserve1 - amountB_out else 0
+        amountA_in = (
+            balanceA - (self.reserve0 - amountA_out)
+            if balanceA > self.reserve0 - amountA_out
+            else 0
+        )
+        amountB_in = (
+            balanceB - (self.reserve1 - amountB_out)
+            if balanceB > self.reserve1 - amountB_out
+            else 0
+        )
 
-        assert amountA_in > 0 or amountB_in > 0, 'UniswapV3: INSUFFICIENT_INPUT_AMOUNT'
-    
-        self._update(balanceA, balanceB)    
-    
+        assert amountA_in > 0 or amountB_in > 0, "UniswapV3: INSUFFICIENT_INPUT_AMOUNT"
 
+        self._update(balanceA, balanceB)
 
     def _update(self, balanceA, balanceB):
-        
-        """ _update
+        """_update
 
-            Update reserve amounts for both coins in the pair
-                
-            Parameters
-            -----------------   
-            balanceA : float
-                New reserve amount of A      
-            balance1 : float
-                New reserve amount of B                   
-        """         
-        
+        Update reserve amounts for both coins in the pair
+
+        Parameters
+        -----------------
+        balanceA : float
+            New reserve amount of A
+        balance1 : float
+            New reserve amount of B
+        """
+
         self.reserve0 = balanceA
-        self.reserve1 = balanceB    
-    
+        self.reserve1 = balanceB
+
     def _modifyPosition(self, params):
 
         checkInputTypes(
@@ -1126,8 +1162,8 @@ class UniswapV3Exchange(IExchange, LPERC20):
             )
             self.last_liquidity_deposit = self.convert_to_human(params.liquidityDelta)
 
-        return (position, amount0, amount1)  
-    
+        return (position, amount0, amount1)
+
     def _updatePosition(self, owner, tickLower, tickUpper, liquidityDelta, tick):
         checkInputTypes(
             accounts=(owner),
@@ -1136,7 +1172,6 @@ class UniswapV3Exchange(IExchange, LPERC20):
         )
         # This will create a position if it doesn't exist
 
-        
         position = Position.get(self.positions, owner, tickLower, tickUpper)
 
         # Initialize values
@@ -1187,13 +1222,9 @@ class UniswapV3Exchange(IExchange, LPERC20):
             self.positions_for_owner[owner] = set()
 
         if position != PositionInfo(0, 0, 0, 0, 0):
-            self.positions_for_owner[owner].add(
-                (tickLower, tickUpper)
-            )
+            self.positions_for_owner[owner].add((tickLower, tickUpper))
         else:
-            self.positions_for_owner[owner].discard(
-                (tickLower, tickUpper)
-            )
+            self.positions_for_owner[owner].discard((tickLower, tickUpper))
 
         ## clear any tick data that is no longer needed
         if liquidityDelta < 0:
@@ -1201,41 +1232,49 @@ class UniswapV3Exchange(IExchange, LPERC20):
                 Tick.clear(self.ticks, tickLower)
             if flippedUpper:
                 Tick.clear(self.ticks, tickUpper)
-        return position    
+        return position
 
     def get_owners(self) -> list[str]:
-        """ get_owners
-        
-            Return a list of all owner addresses
-    
-            Returns
-            -----------------
-            list_of_owner_identifiers: list[str]: 
-                List of owner addresses
+        """get_owners
+
+        Return a list of all owner addresses
+
+        Returns
+        -----------------
+        list_of_owner_identifiers: list[str]:
+            List of owner addresses
         """
         return list(self.positions_for_owner.keys())
 
-      
-    def get_positions_for_owner(
-            self, owner: str
-    ) -> list[tuple[int, int, Position]]:
-        """ get_positions_for_owner
-            
-            Retrieve positions for an owner
+    def get_positions_for_owner(self, owner: str) -> list[tuple[int, int, Position]]:
+        """get_positions_for_owner
 
-            Parameters
-            -----------------   
-            owner: str
-                owner addresse
+        Retrieve positions for an owner
 
-            Returns
-            ----------------- 
-            list_of_tuples : list[tuple[int, int, Position]]: 
-                list [low tick, high tick, Position object for the tick]
+        Parameters
+        -----------------
+        owner: str
+            owner addresse
+
+        Returns
+        -----------------
+        list_of_tuples : list[tuple[int, int, Position]]:
+            list [low tick, high tick, Position object for the tick]
         """
         owner_ticks = self.positions_for_owner.get(owner, set())
         return [
-            (tick[0], tick[1], Position.get(
-                self.positions, owner, tick[0], tick[1]
-            )) for tick in owner_ticks
+            (tick[0], tick[1], Position.get(self.positions, owner, tick[0], tick[1]))
+            for tick in owner_ticks
         ]
+
+    def get_liquidity_at_tick(self, tick=None):
+        assert isinstance(tick, int), "check me"
+        tick = tick if tick is not None else self.slot0.tick
+        liquidity_at_tick = 0
+        for tick_, pos in sorted(self.ticks.items(), key=lambda item: item[0]):
+            if tick >= tick_:
+                best_tick = tick_
+                liquidity_at_tick += pos.liquidityNet
+            else:
+                break
+        return liquidity_at_tick
