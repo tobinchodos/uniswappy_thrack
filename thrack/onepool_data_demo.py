@@ -4,7 +4,8 @@ import numpy as np
 from uniswappy import ERC20, UniV3Utils
 from pool import UniswapPool
 from env import DataDrivenEnv as Env
-from utils import plot
+
+# from utils import plot
 from copy import deepcopy
 from decimal import Decimal
 
@@ -47,35 +48,8 @@ if __name__ == "__main__":
     X_DEC = 18
     Y_DEC = 18
 
-    # event_df = pd.read_csv(
-    #     "resources/pool_events_mintburnswap_0x11b815efb8f581194ae79006d24e0d814b7697f6.csv",
-    #     dtype={
-    #         "amount_lp_token": str,
-    #         "amount0": str,
-    #         "amount1": str,
-    #     },
-    # )
-
-    # orig_event_df = pd.read_csv(
-    #     "resources/Uniswap_V3_Pool_Mint_Burn_and_Swap_Events_Based_on_Pool_NFPM_Contracts.csv",
-    #     dtype={
-    #         "event": str,
-    #         "evt_block_time": str,
-    #         "pool_liquidity": str,
-    #         "sqrtPriceX96": str,
-    #         "liquidity_provider": str,
-    #         "amount_lp_token": str,
-    #         "tickLower": str,
-    #         "tickUpper": str,
-    #         "trader": str,
-    #         "amount0": str,
-    #         "amount1": str,
-    #         "tick": str,
-    #         "source": str,
-    #     },
-    # )
     orig_event_df = pd.read_csv(
-        "resources/harr_ham.csv",
+        "/Users/harrison/Documents/GitHub/uniswappy_thrack/thrack/resources/Uniswap_V3_Pool_Mint_Burn_and_Swap_Events_Based_on_Pool_NFPM_Contracts.csv",
         dtype={
             "event": str,
             "evt_block_time": str,
@@ -92,6 +66,7 @@ if __name__ == "__main__":
             "source": str,
         },
     )
+
     new_names = {
         "event": "event",
         "source": "advanced_user",
@@ -161,137 +136,142 @@ if __name__ == "__main__":
     env = Env(env_config)
     env.reset()
     for i, row in event_df.iterrows():
-        if i > 454:
+        if i > 1000:
             break
         action_dict = row_to_action_dict(row, numeric_columns)
         env.step(action_dict=action_dict)
     # %%
-    # env.collect_metrics()
-    df = pd.DataFrame(env.metrics)
-    df.loc[0, "true_pool.liquidity_at_tick"] = df.loc[0, "true_pool.total_liquidity"]
+    if True:
+        env.collect_metrics()
+        df = pd.DataFrame(env.metrics)
+        df.loc[0, "true_pool.liquidity_at_tick"] = df.loc[
+            0, "true_pool.total_liquidity"
+        ]
 
-    # convert times to times
-    for col in df.columns:
-        if "date" in col:
-            df[col] = pd.to_datetime(df[col])
+        # convert times to times
+        for col in df.columns:
+            if "date" in col:
+                df[col] = pd.to_datetime(df[col])
 
-    # add lifetimes of positions
-    df["lifetime"] = df.date.iloc[-1] - df.start_date
-    df.loc[df.is_burned, "lifetime"] = (
-        df.loc[df.is_burned, "burn_date"] - df.loc[df.is_burned, "start_date"]
-    )
-    df["lifetime_h"] = df["lifetime"].apply(lambda x: x.total_seconds() / 3600)
-
-    # terminal time
-    dg = df[df.date == df.date.iloc[-1]]
-
-    # time and liq vs time
-    dg.plot(
-        x="total_rewards.time_and_liq",
-        y="total_rewards.volume",
-        kind="scatter",
-        trendline="ols",
-    )
-
-    for col in df.filter(regex="^true_|^synth").columns:
-        df[col] = df[col].astype(float)
-    fig = (
-        df.groupby("step")
-        .first()
-        .filter(regex="^true_|^synth|event")
-        .plot(
-            y=df.filter(regex="^true_|^synth").columns, kind="scatter", symbol="event"
+        # add lifetimes of positions
+        df["lifetime"] = df.date.iloc[-1] - df.start_date
+        df.loc[df.is_burned, "lifetime"] = (
+            df.loc[df.is_burned, "burn_date"] - df.loc[df.is_burned, "start_date"]
         )
-    )
-    fig.layout.template = "plotly_dark"
-    fig.show(renderer="browser")
+        df["lifetime_h"] = df["lifetime"].apply(lambda x: x.total_seconds() / 3600)
 
-    # swap(recipient, zeroForOne, amount, limit)
+        # terminal time
+        dg = df[df.date == df.date.iloc[-1]]
 
-    # #
-    # zeroForOne = True <--> token_in=0, token_out=1
-    # zeroForOne = False <--> token_in=1, token_out=0
-    # amount_0 > 0 <--> token_in = 0 <-> zeroForOne = True
-    # amount_1 > 0 <--> token_in = 1 <--> zeroForOne = False
-    # #
-    # zeroForOne = (amount_0>0)
-    # #
-    # amount > 0 --> exact input (you get whatever you get )
-    # amount < 0 --> exact output (your amount in will be variable)
-    # #
-# %%
-# add winner
-# # %%
-# dg["winner"] = dg[
-#     [
-#         "total_rewards.time_and_liq",
-#         "total_rewards.fee",
-#         "total_rewards.volume",
-#         "total_rewards.time",
-#     ]
-# ].idxmax(axis=1)
-# dg["winner"] = dg["winner"].str.replace("total_rewards.", "", regex=False)
+        # time and liq vs time
+        dg.plot(
+            x="total_rewards.time_and_liq",
+            y="total_rewards.volume",
+            kind="scatter",
+            trendline="ols",
+        )
 
-# dg.filter(regex="^total_rewards|winner").groupby("winner").mean().loc[
-#     ["time", "time_and_liq", "volume", "fee"],
-# ]
-# %%
-# df = dg.copy()
-# for pair0, pair1 in [
-#     ("fee", "volume"),
-#     ("time", "volume"),
-#     ("time", "fee"),
-#     ("time_and_liq", "volume"),
-# ]:
-#     col1, col2 = f"total_rewards.{pair0}", f"total_rewards.{pair1}"
-#     df_filtered = df.filter(items=[col1, col2, "lifetime_h", "liquidity_added"]).copy()
-#     for col in df_filtered.columns:
-#         q_low = df[col].quantile(0.05)
-#         q_hi = df[col].quantile(0.95)
-#         df_filtered = df_filtered[
-#             (df_filtered[col] < q_hi) & (df_filtered[col] > q_low)
-#         ]
-#     print(df_filtered.corr())
-#     fig = df_filtered.plot(
-#         x=col1,
-#         y=col2,
-#         kind="scatter",
-#         trendline="ols",
-#         marginal_x="violin",
-#         marginal_y="violin",
-#         color="liquidity_added",
-#     )
-#     fig.show()
+        for col in df.filter(regex="^true_|^synth").columns:
+            df[col] = df[col].astype(float)
+        fig = (
+            df.groupby("step")
+            .first()
+            .filter(regex="^true_|^synth|event")
+            .plot(
+                y=df.filter(regex="^true_|^synth").columns,
+                kind="scatter",
+                symbol="event",
+            )
+        )
+        fig.layout.template = "plotly_dark"
+        fig.show(renderer="browser")
 
-# df = dg.drop(
-#     columns=[
-#         "pool_id",
-#         "date",
-#         "last_burn_date",
-#         "burn_date",
-#         "lp_id",
-#         "start_date",
-#         "last_add_date",
-#         "liquidity",
-#         "lifetime",
-#         "last_burn_date",
-#         "in_range",
-#         "lwr_tick",
-#         "upr_tick",
-#         "Unnamed: 0",
-#         "rewards.volume",
-#         "rewards.time",
-#         "rewards.fee",
-#         "lifetime_m",
-#         "lifetime_d",
-#         "lifetime_s",
-#         "true_pool.price",
-#         "synth_pool.price",
-#         "true_pool.price/synth_pool.price",
-#         "magnitude of price divergence",
-#         "synth_pool.liquidity_at_tick",
-#         "synth_pool.total_liquidity",
-#         "true_pool.liquidity_at_tick",
-#         "true_pool.total_liquidity",
-#     ]
-# )
+        # swap(recipient, zeroForOne, amount, limit)
+
+        # #
+        # zeroForOne = True <--> token_in=0, token_out=1
+        # zeroForOne = False <--> token_in=1, token_out=0
+        # amount_0 > 0 <--> token_in = 0 <-> zeroForOne = True
+        # amount_1 > 0 <--> token_in = 1 <--> zeroForOne = False
+        # #
+        # zeroForOne = (amount_0>0)
+        # #
+        # amount > 0 --> exact input (you get whatever you get )
+        # amount < 0 --> exact output (your amount in will be variable)
+        # #
+    # %%
+    # add winner
+    # # %%
+    # dg["winner"] = dg[
+    #     [
+    #         "total_rewards.time_and_liq",
+    #         "total_rewards.fee",
+    #         "total_rewards.volume",
+    #         "total_rewards.time",
+    #     ]
+    # ].idxmax(axis=1)
+    # dg["winner"] = dg["winner"].str.replace("total_rewards.", "", regex=False)
+
+    # dg.filter(regex="^total_rewards|winner").groupby("winner").mean().loc[
+    #     ["time", "time_and_liq", "volume", "fee"],
+    # ]
+    # %%
+    # df = dg.copy()
+    # for pair0, pair1 in [
+    #     ("fee", "volume"),
+    #     ("time", "volume"),
+    #     ("time", "fee"),
+    #     ("time_and_liq", "volume"),
+    # ]:
+    #     col1, col2 = f"total_rewards.{pair0}", f"total_rewards.{pair1}"
+    #     df_filtered = df.filter(items=[col1, col2, "lifetime_h", "liquidity_added"]).copy()
+    #     for col in df_filtered.columns:
+    #         q_low = df[col].quantile(0.05)
+    #         q_hi = df[col].quantile(0.95)
+    #         df_filtered = df_filtered[
+    #             (df_filtered[col] < q_hi) & (df_filtered[col] > q_low)
+    #         ]
+    #     print(df_filtered.corr())
+    #     fig = df_filtered.plot(
+    #         x=col1,
+    #         y=col2,
+    #         kind="scatter",
+    #         trendline="ols",
+    #         marginal_x="violin",
+    #         marginal_y="violin",
+    #         color="liquidity_added",
+    #     )
+    #     fig.show()
+
+    # df = dg.drop(
+    #     columns=[
+    #         "pool_id",
+    #         "date",
+    #         "last_burn_date",
+    #         "burn_date",
+    #         "lp_id",
+    #         "start_date",
+    #         "last_add_date",
+    #         "liquidity",
+    #         "lifetime",
+    #         "last_burn_date",
+    #         "in_range",
+    #         "lwr_tick",
+    #         "upr_tick",
+    #         "Unnamed: 0",
+    #         "rewards.volume",
+    #         "rewards.time",
+    #         "rewards.fee",
+    #         "lifetime_m",
+    #         "lifetime_d",
+    #         "lifetime_s",
+    #         "true_pool.price",
+    #         "synth_pool.price",
+    #         "true_pool.price/synth_pool.price",
+    #         "magnitude of price divergence",
+    #         "synth_pool.liquidity_at_tick",
+    #         "synth_pool.total_liquidity",
+    #         "true_pool.liquidity_at_tick",
+    #         "true_pool.total_liquidity",
+    #     ]
+    # )

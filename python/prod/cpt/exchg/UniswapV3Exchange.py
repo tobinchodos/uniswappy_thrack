@@ -1003,7 +1003,7 @@ class UniswapV3Exchange(IExchange, LPERC20):
             )
 
         elif (recipient in self.liquidity_providers) and (amount <= 0):
-            if self.liquidity_providers[recipient] > abs(amount):
+            if self.liquidity_providers[recipient] >= abs(amount):
                 self.liquidity_providers[recipient] = (
                     self.liquidity_providers[recipient] + amount
                 )
@@ -1268,8 +1268,8 @@ class UniswapV3Exchange(IExchange, LPERC20):
         ]
 
     def get_liquidity_at_tick(self, tick=None):
-        assert isinstance(tick, int), "check me"
         tick = tick if tick is not None else self.slot0.tick
+        assert isinstance(tick, int), "check me"
         liquidity_at_tick = 0
         for tick_, pos in sorted(self.ticks.items(), key=lambda item: item[0]):
             if tick >= tick_:
