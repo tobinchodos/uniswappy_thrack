@@ -136,11 +136,11 @@ if __name__ == "__main__":
     env = Env(env_config)
     env.reset()
     for i, row in event_df.iterrows():
-        if i > 1000:
+        if i > 5000:
             break
         action_dict = row_to_action_dict(row, numeric_columns)
         env.step(action_dict=action_dict)
-    # %%
+
     if True:
         env.collect_metrics()
         df = pd.DataFrame(env.metrics)
@@ -186,92 +186,123 @@ if __name__ == "__main__":
         fig.layout.template = "plotly_dark"
         fig.show(renderer="browser")
 
-        # swap(recipient, zeroForOne, amount, limit)
+        df["fees_earned_0/exp_fees_0"] = (
+            df["fees_earned_0"].astype(float) / df["exp_fees_0"] / 10**18
+        )
+        df["fees_earned_1/exp_fees_1"] = (
+            df["fees_earned_1"].astype(float) / df["exp_fees_1"] / 10**18
+        )
+        df[
+            ~np.isclose(df["fees_earned_0/exp_fees_0"].fillna(1), 1)
+            | ~np.isclose(df["fees_earned_1/exp_fees_1"].fillna(1), 1)
+        ]
 
-        # #
-        # zeroForOne = True <--> token_in=0, token_out=1
-        # zeroForOne = False <--> token_in=1, token_out=0
-        # amount_0 > 0 <--> token_in = 0 <-> zeroForOne = True
-        # amount_1 > 0 <--> token_in = 1 <--> zeroForOne = False
-        # #
-        # zeroForOne = (amount_0>0)
-        # #
-        # amount > 0 --> exact input (you get whatever you get )
-        # amount < 0 --> exact output (your amount in will be variable)
-        # #
-    # %%
-    # add winner
-    # # %%
-    # dg["winner"] = dg[
-    #     [
-    #         "total_rewards.time_and_liq",
-    #         "total_rewards.fee",
-    #         "total_rewards.volume",
-    #         "total_rewards.time",
-    #     ]
-    # ].idxmax(axis=1)
-    # dg["winner"] = dg["winner"].str.replace("total_rewards.", "", regex=False)
+    p = env.pools.get("uni_0")
+    for key, hp in p.positions.items():
+        _hash = hash(key)
+        if _hash in p._pool.positions:
+            _pos = p._pool.positions[_hash]
+            if not np.isclose(
+                (_pos.tokensOwed0 + hp.fees_earned_0) / 10**18, hp._exp_fees_0
+            ):
+                print(f"pos.liquidity={_pos.liquidity}")
+                print(f"hp.liquidity={hp.liquidity}")
 
-    # dg.filter(regex="^total_rewards|winner").groupby("winner").mean().loc[
-    #     ["time", "time_and_liq", "volume", "fee"],
-    # ]
-    # %%
-    # df = dg.copy()
-    # for pair0, pair1 in [
-    #     ("fee", "volume"),
-    #     ("time", "volume"),
-    #     ("time", "fee"),
-    #     ("time_and_liq", "volume"),
-    # ]:
-    #     col1, col2 = f"total_rewards.{pair0}", f"total_rewards.{pair1}"
-    #     df_filtered = df.filter(items=[col1, col2, "lifetime_h", "liquidity_added"]).copy()
-    #     for col in df_filtered.columns:
-    #         q_low = df[col].quantile(0.05)
-    #         q_hi = df[col].quantile(0.95)
-    #         df_filtered = df_filtered[
-    #             (df_filtered[col] < q_hi) & (df_filtered[col] > q_low)
-    #         ]
-    #     print(df_filtered.corr())
-    #     fig = df_filtered.plot(
-    #         x=col1,
-    #         y=col2,
-    #         kind="scatter",
-    #         trendline="ols",
-    #         marginal_x="violin",
-    #         marginal_y="violin",
-    #         color="liquidity_added",
-    #     )
-    #     fig.show()
+                print(f"pos.tokensOwed0={_pos.tokensOwed0}")
+                print(f"hp.fees_earned_0={hp.fees_earned_0}")
+                print(f"hp.exp_fees_0={hp._exp_fees_0}")
 
-    # df = dg.drop(
-    #     columns=[
-    #         "pool_id",
-    #         "date",
-    #         "last_burn_date",
-    #         "burn_date",
-    #         "lp_id",
-    #         "start_date",
-    #         "last_add_date",
-    #         "liquidity",
-    #         "lifetime",
-    #         "last_burn_date",
-    #         "in_range",
-    #         "lwr_tick",
-    #         "upr_tick",
-    #         "Unnamed: 0",
-    #         "rewards.volume",
-    #         "rewards.time",
-    #         "rewards.fee",
-    #         "lifetime_m",
-    #         "lifetime_d",
-    #         "lifetime_s",
-    #         "true_pool.price",
-    #         "synth_pool.price",
-    #         "true_pool.price/synth_pool.price",
-    #         "magnitude of price divergence",
-    #         "synth_pool.liquidity_at_tick",
-    #         "synth_pool.total_liquidity",
-    #         "true_pool.liquidity_at_tick",
-    #         "true_pool.total_liquidity",
-    #     ]
-    # )
+                print(f"pos.tokensOwed1={_pos.tokensOwed1}")
+                print(f"hp.fees_earned_1={hp.fees_earned_1}")
+                print(f"hp.exp_fees_1={hp._exp_fees_1}")
+                print(hp)
+                print("\n")
+# swap(recipient, zeroForOne, amount, limit)
+
+# #
+# zeroForOne = True <--> token_in=0, token_out=1
+# zeroForOne = False <--> token_in=1, token_out=0
+# amount_0 > 0 <--> token_in = 0 <-> zeroForOne = True
+# amount_1 > 0 <--> token_in = 1 <--> zeroForOne = False
+# #
+# zeroForOne = (amount_0>0)
+# #
+# amount > 0 --> exact input (you get whatever you get )
+# amount < 0 --> exact output (your amount in will be variable)
+# #
+# %%
+# add winner
+# # %%
+# dg["winner"] = dg[
+#     [
+#         "total_rewards.time_and_liq",
+#         "total_rewards.fee",
+#         "total_rewards.volume",
+#         "total_rewards.time",
+#     ]
+# ].idxmax(axis=1)
+# dg["winner"] = dg["winner"].str.replace("total_rewards.", "", regex=False)
+
+# dg.filter(regex="^total_rewards|winner").groupby("winner").mean().loc[
+#     ["time", "time_and_liq", "volume", "fee"],
+# ]
+# %%
+# df = dg.copy()
+# for pair0, pair1 in [
+#     ("fee", "volume"),
+#     ("time", "volume"),
+#     ("time", "fee"),
+#     ("time_and_liq", "volume"),
+# ]:
+#     col1, col2 = f"total_rewards.{pair0}", f"total_rewards.{pair1}"
+#     df_filtered = df.filter(items=[col1, col2, "lifetime_h", "liquidity_added"]).copy()
+#     for col in df_filtered.columns:
+#         q_low = df[col].quantile(0.05)
+#         q_hi = df[col].quantile(0.95)
+#         df_filtered = df_filtered[
+#             (df_filtered[col] < q_hi) & (df_filtered[col] > q_low)
+#         ]
+#     print(df_filtered.corr())
+#     fig = df_filtered.plot(
+#         x=col1,
+#         y=col2,
+#         kind="scatter",
+#         trendline="ols",
+#         marginal_x="violin",
+#         marginal_y="violin",
+#         color="liquidity_added",
+#     )
+#     fig.show()
+
+# df = dg.drop(
+#     columns=[
+#         "pool_id",
+#         "date",
+#         "last_burn_date",
+#         "burn_date",
+#         "lp_id",
+#         "start_date",
+#         "last_add_date",
+#         "liquidity",
+#         "lifetime",
+#         "last_burn_date",
+#         "in_range",
+#         "lwr_tick",
+#         "upr_tick",
+#         "Unnamed: 0",
+#         "rewards.volume",
+#         "rewards.time",
+#         "rewards.fee",
+#         "lifetime_m",
+#         "lifetime_d",
+#         "lifetime_s",
+#         "true_pool.price",
+#         "synth_pool.price",
+#         "true_pool.price/synth_pool.price",
+#         "magnitude of price divergence",
+#         "synth_pool.liquidity_at_tick",
+#         "synth_pool.total_liquidity",
+#         "true_pool.liquidity_at_tick",
+#         "true_pool.total_liquidity",
+#     ]
+# )

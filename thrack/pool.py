@@ -193,12 +193,16 @@ class UniswapPool:
     def burn(self, lp_id, lwr_tick, upr_tick, liquidity_amount, date):
         hp = self.positions.get((lp_id, int(lwr_tick), int(upr_tick)))
         assert hp is not None
+
+        #
+
         out = self._pool.burn(
             recipient=lp_id,
             tickLower=int(lwr_tick),
             tickUpper=int(upr_tick),
             amount=liquidity_amount,
         )
+
         amount_0, amount_1 = out[-2::]
         # should be put inside the hp
         hp.on_liquidity_update(

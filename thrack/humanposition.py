@@ -72,7 +72,7 @@ class HumanPosition:
             self.num_swaps_during_lifetime += (
                 1  # swaps seen by pool during this guys life
             )
-            self._num_swaps_in_range += 1 if self.in_range else 0
+
             self._pre_swap_inv_0 = self.inventory_0
             self._pre_swap_inv_1 = self.inventory_1
             self._pre_swap_fees_0 = self.fees_earned_0
@@ -84,9 +84,12 @@ class HumanPosition:
         if not self.is_burned:  #
             # self.collect_fees()
             # inventory changes & volume
+
             delta_inv_0 = self.inventory_0 - self._pre_swap_inv_0
             delta_inv_1 = self.inventory_1 - self._pre_swap_inv_1
+
             assert delta_inv_1 >= 0 or delta_inv_0 >= 0, "something wrong"
+            self._num_swaps_in_range += 1 if (delta_inv_1 > 0 or delta_inv_0 > 0) else 0
             dollar_vol_0 = delta_inv_0 * self.pool.get_price()
             dollar_vol_1 = delta_inv_1
             volume = dollar_vol_0 if dollar_vol_0 >= 0 else dollar_vol_1
@@ -110,12 +113,8 @@ class HumanPosition:
             )
             self.total_fee_value_earned += self.fee_value_earned_this_swap
 
-            self._exp_fees_0 += (
-                delta_inv_0 * 0.003 / (1 - 0.003) if delta_inv_0 > 0 else 0
-            )
-            self._exp_fees_1 += (
-                delta_inv_1 * 0.003 / (1 - 0.003) if delta_inv_1 > 0 else 0
-            )
+            self._exp_fees_0 += delta_inv_0 * 0.003 / 0.997 if delta_inv_0 > 0 else 0
+            self._exp_fees_1 += delta_inv_1 * 0.003 / 0.997 if delta_inv_1 > 0 else 0
 
         return
 
@@ -154,7 +153,6 @@ class HumanPosition:
         if kind == "add":
             self._total_value_0_added += amount_0 * price
             self._total_value_1_added += amount_1
-
         if self.is_burned:
             self.burn_date = date
         return
@@ -291,6 +289,7 @@ class HumanPosition:
     def inventory(self):
         # [x]: check inv scaling... using both token_1_dec
         price = self.pool.get_price()
+
         # I_x(p;L,p_min,p_max) = \sqrt{L}\left(\sqrt{\frac{1}{\min\left(\max\left(p,p_{min}\right),p_{max}\right)}}-\sqrt{\frac{1}{p_{max}}}\right)
 
         i_0 = self.liquidity * (
@@ -344,21 +343,35 @@ class HumanPosition:
         return
 
     def collect_fees(self):
-        BIG_NUM = 2**64 - 2
-        self.pool._pool.burn(self.owner, self.lwr_tick, self.upr_tick, 0)
-        fee_data = self.pool._pool.collect(
-            self.owner,
-            self.lwr_tick,
-            self.upr_tick,
-            BIG_NUM,
-            BIG_NUM,
-        )
-        x_fees = fee_data[-2]
-        y_fees = fee_data[-1]
+        # set flag for collecting at most one time at end of sim...
+        if not hasattr(self, "collected_fees"):
+            self.collected_fees = False
 
-        self.fees_earned_0 += x_fees
-        self.fees_earned_1 += y_fees
+        if self.collected_fees:
+            assert False
 
+        BIG_NUM = (2**64 - 2) * 10**18
+        _hash = hash((self.owner, self.lwr_tick, self.upr_tick))
+        if _hash in self.pool._pool.positions:
+            if not self.is_burned:
+                self.pool._pool.burn(self.owner, self.lwr_tick, self.upr_tick, 0)
+
+            fee_data = self.pool._pool.collect(
+                self.owner,
+                self.lwr_tick,
+                self.upr_tick,
+                BIG_NUM,
+                BIG_NUM,
+            )
+            x_fees = fee_data[-2]
+            y_fees = fee_data[-1]
+
+            self.fees_earned_0 += x_fees - self.token_0_burned
+            self.fees_earned_1 += y_fees - self.token_1_burned
+        else:
+            assert False, "not in positions... wtf"
+            x_fees, y_fees = 0, 0
+        self.collected_fees = True
         return x_fees, y_fees
 
     def __repr__(self):
@@ -371,6 +384,14 @@ class HumanPosition:
     @property
     def num_burns(self):
         return len(self.updates.get("burns"))
+
+    @property
+    def token_0_burned(self):
+        return sum([burn.get("amount_0") for burn in self.updates.get("burns")])
+
+    @property
+    def token_1_burned(self):
+        return sum([burn.get("amount_1") for burn in self.updates.get("burns")])
 
     @property
     def liquidity_added(self):

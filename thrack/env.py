@@ -289,6 +289,14 @@ class DataDrivenEnv(Env):
         event = ctx.get("orig_kwargs").get("event")
         states = {}
         global_positions = []
+
+        #### test
+        for pos in self.pools.get("uni_0").positions.values():
+
+            pos.collect_fees()
+
+        ####
+
         for pool_id, pool in self.pools.items():
             state = pool.get_state()
             global_positions.extend(state.pop("positions"))
