@@ -197,26 +197,27 @@ if __name__ == "__main__":
             | ~np.isclose(df["fees_earned_1/exp_fees_1"].fillna(1), 1)
         ]
 
-    p = env.pools.get("uni_0")
-    for key, hp in p.positions.items():
-        _hash = hash(key)
-        if _hash in p._pool.positions:
-            _pos = p._pool.positions[_hash]
-            if not np.isclose(
-                (_pos.tokensOwed0 + hp.fees_earned_0) / 10**18, hp._exp_fees_0
-            ):
-                print(f"pos.liquidity={_pos.liquidity}")
-                print(f"hp.liquidity={hp.liquidity}")
+        p = env.pools.get("uni_0")
+        for key, hp in p.positions.items():
 
-                print(f"pos.tokensOwed0={_pos.tokensOwed0}")
-                print(f"hp.fees_earned_0={hp.fees_earned_0}")
-                print(f"hp.exp_fees_0={hp._exp_fees_0}")
+            _hash = hash(key)
+            if _hash in p._pool.positions:
+                _pos = p._pool.positions[_hash]
+                if not np.isclose(
+                    (hp.fees_earned_0) / 10**18, hp._exp_fees_0
+                ) or not np.isclose((hp.fees_earned_1) / 10**18, hp._exp_fees_1):
+                    print(f"pos.liquidity={_pos.liquidity}")
+                    print(f"hp.liquidity={hp.liquidity}")
 
-                print(f"pos.tokensOwed1={_pos.tokensOwed1}")
-                print(f"hp.fees_earned_1={hp.fees_earned_1}")
-                print(f"hp.exp_fees_1={hp._exp_fees_1}")
-                print(hp)
-                print("\n")
+                    print(f"pos.tokensOwed0={_pos.tokensOwed0}")
+                    print(f"hp.fees_earned_0={hp.fees_earned_0}")
+                    print(f"hp.exp_fees_0={hp._exp_fees_0}")
+
+                    print(f"pos.tokensOwed1={_pos.tokensOwed1}")
+                    print(f"hp.fees_earned_1={hp.fees_earned_1}")
+                    print(f"hp.exp_fees_1={hp._exp_fees_1}")
+                    print(hp)
+                    print("\n")
 # swap(recipient, zeroForOne, amount, limit)
 
 # #
