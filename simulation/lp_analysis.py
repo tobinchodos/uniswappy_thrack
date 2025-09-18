@@ -16,7 +16,9 @@ def load_and_preprocess(filepath: str, n_rows: int) -> pd.DataFrame:
         "event",
         "amount0",
         "amount1",
-        'fee_rate'
+        'fee_rate',
+        'evt_block_time',
+        'pool_liquidity'
     ]
     df = pd.read_csv(filepath, usecols=required_columns)[:n_rows]
 
@@ -81,8 +83,6 @@ def _process_lp(
     }
     return data
 
-
-
 def compute_inventory_and_fees_parallel(
     cumulative: pd.DataFrame, df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -134,7 +134,6 @@ def compute_inventory_and_fees_parallel(
 
     return cumulative
 
-
 def main():
 
     parser = argparse.ArgumentParser(description="LP analysis (float + parallel)")
@@ -152,7 +151,15 @@ def main():
 
     result = compute_inventory_and_fees_parallel(cumulative, df)
     fee_rate = df.iloc[0].fee_rate
+    # retrieve info that was discarded in processing above
+    result['price'] = df.price
     result['fee_rate'] = fee_rate
+    result['evt_block_time'] = df.evt_block_time
+    result['pool_liquidity'] = df.pool_liquidity
+    result['event'] = df.event
+    result['amount0'] = df.amount0
+    result['amount1'] = df.amount1
+
     compute_time = time.time()
     print(
         f"DONE with compute_inventory_and_fees_parallel, took {compute_time-cum_time}"
