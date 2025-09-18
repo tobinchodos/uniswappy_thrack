@@ -109,10 +109,10 @@ def compute_inventory_and_fees_parallel(
     current_price = df["current_price"].values
     amount_0 = df.amount0.values
     amount_1 = df.amount1.values
-    swaps_logical = df.event.values == 2
+    swaps_logical = df.event.values == 'swap'
     cond_0 = np.logical_and(swaps_logical, (amount_0 > 0))
     cond_1 = np.logical_and(swaps_logical, (amount_1 > 0))
-    print(cumulative.columns)
+
     for i, col in enumerate(lp_cols):
 
         liquidity = cumulative[col].values
@@ -136,14 +136,12 @@ def compute_inventory_and_fees_parallel(
         )
 
     # Merge all LP results
-    print(f"Parallel compute done")
-    t = time.time()
     d = {}
     for result in results:
         d.update(result)
     result_df = pd.DataFrame(d)
     cumulative = pd.concat([cumulative, result_df], axis=1)
-    print(f"Concatting done, took {t-time.time()}")
+
     # cumulative = None
     return cumulative
 
@@ -163,13 +161,14 @@ def main():
     print(f"DONE with CUMULATIVE, took {cum_time-start_time}")
 
     result = compute_inventory_and_fees_parallel(cumulative, df)
+
     compute_time = time.time()
     print(
         f"DONE with compute_inventory_and_fees_parallel, took {compute_time-cum_time}"
     )
-    output_file = "lp_analysis_output_float_parallel.csv"
+    output_file = "lp_analysis_output_float_parallel.parquet"
     if args.output == "True":
-        result.to_csv(output_file)
+        result.to_parquet(output_file, engine='pyarrow',compression='snappy')
 
     elapsed = time.time() - start_time
     m, s = divmod(elapsed, 60)
