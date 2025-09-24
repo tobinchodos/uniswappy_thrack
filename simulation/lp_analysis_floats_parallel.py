@@ -72,28 +72,13 @@ def _process_lp(
     fee0 = np.where(cond_0, inv0_diff * (FEE_RATE / FEE_DIVISOR), 0)
     fee1 = np.where(cond_1, inv1_diff * (FEE_RATE / FEE_DIVISOR), 0)
 
-    # df_lp = pd.DataFrame(
-    #     {
-    #         f"{col}_inventory_0": inv0,
-    #         f"{col}_inventory_1": inv1,
-    #         f"{col}_fee_0": fee0,
-    #         f"{col}_fee_1": fee1,
-    #     },
-    #     index=subset[7],
-    # )
-
-    # return df_lp
     data = {
         f"{col}_inventory_0": inv0,
         f"{col}_inventory_1": inv1,
         f"{col}_fee_0": fee0,
         f"{col}_fee_1": fee1,
-        # "index": subset[7],
     }
     return data
-
-
-import re
 
 
 def compute_inventory_and_fees_parallel(
@@ -109,7 +94,7 @@ def compute_inventory_and_fees_parallel(
     current_price = df["current_price"].values
     amount_0 = df.amount0.values
     amount_1 = df.amount1.values
-    swaps_logical = df.event.values == 'swap'
+    swaps_logical = df.event.values == "swap"
     cond_0 = np.logical_and(swaps_logical, (amount_0 > 0))
     cond_1 = np.logical_and(swaps_logical, (amount_1 > 0))
 
@@ -168,7 +153,7 @@ def main():
     )
     output_file = "lp_analysis_output_float_parallel.parquet"
     if args.output == "True":
-        result.to_parquet(output_file, engine='pyarrow',compression='snappy')
+        result.to_parquet(output_file, engine="pyarrow", compression="snappy")
 
     elapsed = time.time() - start_time
     m, s = divmod(elapsed, 60)

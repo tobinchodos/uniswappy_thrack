@@ -5,7 +5,6 @@ import time
 from multiprocessing import Pool, cpu_count
 
 
-
 def load_and_preprocess(filepath: str, n_rows: int) -> pd.DataFrame:
     required_columns = [
         "amount_lp_token",
@@ -16,9 +15,9 @@ def load_and_preprocess(filepath: str, n_rows: int) -> pd.DataFrame:
         "event",
         "amount0",
         "amount1",
-        'fee_rate',
-        'evt_block_time',
-        'pool_liquidity'
+        "fee_rate",
+        "evt_block_time",
+        "pool_liquidity",
     ]
     df = pd.read_csv(filepath, usecols=required_columns)[:n_rows]
 
@@ -47,18 +46,8 @@ def compute_cumulative_lp_amounts(df: pd.DataFrame) -> pd.DataFrame:
     return cumulative
 
 
-
-
-
 def _process_lp(
-    current_price,
-    cond_0,
-    cond_1,
-    col,
-    liquidity,
-    low_price,
-    high_price,
-    fee_rate
+    current_price, cond_0, cond_1, col, liquidity, low_price, high_price, fee_rate
 ):
     """Compute inventory + fees for a single LP."""
     vec = np.sqrt(
@@ -72,8 +61,8 @@ def _process_lp(
     inv0_diff = np.diff(inv0, prepend=0)
     inv1_diff = np.diff(inv1, prepend=0)
 
-    fee0 = np.where(cond_0, inv0_diff * (fee_rate / (1-fee_rate)), 0)
-    fee1 = np.where(cond_1, inv1_diff * (fee_rate / (1-fee_rate)), 0)
+    fee0 = np.where(cond_0, inv0_diff * (fee_rate / (1 - fee_rate)), 0)
+    fee1 = np.where(cond_1, inv1_diff * (fee_rate / (1 - fee_rate)), 0)
 
     data = {
         f"{col}_inventory_0": inv0,
@@ -82,6 +71,7 @@ def _process_lp(
         f"{col}_fee_1": fee1,
     }
     return data
+
 
 def compute_inventory_and_fees_parallel(
     cumulative: pd.DataFrame, df: pd.DataFrame
@@ -96,7 +86,7 @@ def compute_inventory_and_fees_parallel(
     current_price = df["current_price"].values
     amount_0 = df.amount0.values
     amount_1 = df.amount1.values
-    swaps_logical = df.event.values == 'swap'
+    swaps_logical = df.event.values == "swap"
     cond_0 = np.logical_and(swaps_logical, (amount_0 > 0))
     cond_1 = np.logical_and(swaps_logical, (amount_1 > 0))
     fee_rate = df.iloc[0].fee_rate / 10**6
@@ -115,7 +105,7 @@ def compute_inventory_and_fees_parallel(
                 liquidity,
                 low_price,
                 high_price,
-                fee_rate
+                fee_rate,
             )
         )
 
@@ -133,6 +123,7 @@ def compute_inventory_and_fees_parallel(
     cumulative = pd.concat([cumulative, result_df], axis=1)
 
     return cumulative
+
 
 def main():
 
@@ -152,13 +143,13 @@ def main():
     result = compute_inventory_and_fees_parallel(cumulative, df)
     fee_rate = df.iloc[0].fee_rate
     # retrieve info that was discarded in processing above
-    result['price'] = df.price
-    result['fee_rate'] = fee_rate
-    result['evt_block_time'] = df.evt_block_time
-    result['pool_liquidity'] = df.pool_liquidity
-    result['event'] = df.event
-    result['amount0'] = df.amount0
-    result['amount1'] = df.amount1
+    result["price"] = df.price
+    result["fee_rate"] = fee_rate
+    result["evt_block_time"] = df.evt_block_time
+    result["pool_liquidity"] = df.pool_liquidity
+    result["event"] = df.event
+    result["amount0"] = df.amount0
+    result["amount1"] = df.amount1
 
     compute_time = time.time()
     print(
@@ -166,7 +157,7 @@ def main():
     )
     output_file = f"lp_analysis_output_{args.file.split('.')[0]}.parquet"
     if args.output == "True":
-        result.to_parquet(output_file, engine='pyarrow',compression='snappy')
+        result.to_parquet(output_file, engine="pyarrow", compression="snappy")
 
     elapsed = time.time() - start_time
     m, s = divmod(elapsed, 60)
@@ -174,6 +165,7 @@ def main():
     print(f"Time to completion: {int(m)}m {s:.2f}s")
     if args.output == "True":
         print(f"Results saved to {output_file}")
+
 
 if __name__ == "__main__":
     main()
