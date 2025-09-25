@@ -34,8 +34,65 @@ def load_and_preprocess(filepath: str, n_rows: int) -> pd.DataFrame:
     df["lp_tuple"] = list(zip(df.liquidity_provider, df.tickLower, df.tickUpper))
     return df
 
+def get_lp_info(subset):
+    L = subset.amount_lp_token.ffill().cumsum()
+    position = subset.lp_tuple.iloc[0]
+    fee_rate = .003#subset.iloc[0].fee_rate
 
-def compute_cumulative_lp_amounts(df: pd.DataFrame) -> pd.DataFrame:
+    low_price = 1.0001 ** int(position[1])
+    high_price = 1.0001 ** int(position[2])
+
+    """Compute inventory + fees for a single LP."""
+    vec = np.sqrt(
+        np._core.umath.maximum(
+            np._core.umath.minimum(subset.current_price, high_price), low_price
+        )
+    )
+    inv0 = L * (1 / vec - 1 / np.sqrt(high_price))
+    inv1 = L * (vec - np.sqrt(low_price))
+
+    inv0_diff = np.diff(inv0, prepend=0)
+    inv1_diff = np.diff(inv1, prepend=0)
+        
+    swaps_logical = subset.event.values == 'swap'
+    cond_0 = np.logical_and(swaps_logical, (subset.amount0 > 0))
+    cond_1 = np.logical_and(swaps_logical, (subset.amount1 > 0))
+
+    fee0 = np.where(cond_0, inv0_diff * (fee_rate / (1-fee_rate)), 0)
+    fee1 = np.where(cond_1, inv1_diff * (fee_rate / (1-fee_rate)), 0)
+
+    row = (
+        np.abs(inv0_diff).sum(),     # total absolute changes in inv0
+        np.abs(inv1_diff).sum(),     # total absolute changes in inv1
+        fee0.sum(),                  # total fee0
+        fee1.sum()                   # total fee1
+    )
+
+    return(row)
+
+def compute_lp_aggregate_amounts(df,bounds) -> pd.DataFrame:
+    rows = []
+    df = df[df.lp_tuple != ('0x', 0.0, 0.0)]
+    for lp in df.lp_tuple.unique():
+        low = bounds.at[lp,'first_index']
+        high = bounds.at[lp,'last_index']
+        subset = df[(df.index >= low) & (df.index <= high)] # only rows we care about 
+        row = get_lp_info(subset)
+        rows.append({
+            'lp_tuple': lp,
+            'inv0_sum': row[0],
+            'inv1_sum': row[1],
+            'fee0_sum': row[2],
+            'fee1_sum': row[3]
+        })
+    out_df = pd.DataFrame(rows)
+    numeric_cols = ['inv0_sum', 'inv1_sum', 'fee0_sum', 'fee1_sum']
+    out_df[numeric_cols] = out_df[numeric_cols].astype(float)
+    
+    return(out_df)
+
+
+def compute_cumulative_lp_amounts(df: pd.DataFrame,bounds = pd.DataFrame) -> pd.DataFrame:
     t = time.time()
     cumulative = (
         df.groupby([df.index, "lp_tuple"])["amount_lp_token"]
@@ -47,8 +104,24 @@ def compute_cumulative_lp_amounts(df: pd.DataFrame) -> pd.DataFrame:
     return cumulative
 
 
-
-
+def get_lp_bounds(df):
+    mask = df.event.isin(['mint', 'burn'])
+    first_indices = (
+        df[mask]
+        .groupby('lp_tuple')
+        .apply(lambda x: x.index[0])
+        .reset_index(name='first_index')
+    )
+    last_indices = (
+        df[df.event == 'burn']
+        .groupby('lp_tuple')
+        .apply(lambda x: x.index.max())
+        .reset_index(name='last_index')
+    )
+    merged = pd.merge(first_indices, last_indices, on='lp_tuple', how='outer')
+    merged['last_index'] = merged['last_index'].fillna(df.index[-1])
+    merged = merged.set_index('lp_tuple')
+    return(merged)
 
 def _process_lp(
     current_price,
@@ -145,28 +218,31 @@ def main():
     start_time = time.time()
     print(f"Loading {args.rows} rows from {args.file}...")
     df = load_and_preprocess(args.file, args.rows)
-    cumulative = compute_cumulative_lp_amounts(df)
+    bounds = get_lp_bounds(df)
+    result = compute_lp_aggregate_amounts(df,bounds)
+    # cumulative = compute_cumulative_lp_amounts(df,bounds)
     cum_time = time.time()
-    print(f"DONE with CUMULATIVE, took {cum_time-start_time}")
+    # print(f"DONE with CUMULATIVE, took {cum_time-start_time}")
 
-    result = compute_inventory_and_fees_parallel(cumulative, df)
-    fee_rate = df.iloc[0].fee_rate
+    # result = compute_inventory_and_fees_parallel(cumulative, df)
+    # fee_rate = df.iloc[0].fee_rate
     # retrieve info that was discarded in processing above
-    result['price'] = df.price
-    result['fee_rate'] = fee_rate
-    result['evt_block_time'] = df.evt_block_time
-    result['pool_liquidity'] = df.pool_liquidity
-    result['event'] = df.event
-    result['amount0'] = df.amount0
-    result['amount1'] = df.amount1
+    # result['price'] = df.price
+    # result['fee_rate'] = fee_rate
+    # result['evt_block_time'] = df.evt_block_time
+    # result['pool_liquidity'] = df.pool_liquidity.astype(float)
+    # result['event'] = df.event
+    # result['amount0'] = df.amount0
+    # result['amount1'] = df.amount1
 
     compute_time = time.time()
     print(
         f"DONE with compute_inventory_and_fees_parallel, took {compute_time-cum_time}"
     )
-    output_file = f"lp_analysis_output_{args.file.split('.')[0]}.parquet"
+    output_file = f"lp_analysis_output_{args.file.split('/')[-1].split('.')[0]}.csv"
     if args.output == "True":
-        result.to_parquet(output_file, engine='pyarrow',compression='snappy')
+        # result.to_parquet(output_file, engine='pyarrow',compression='snappy')
+        result.to_csv(output_file)
 
     elapsed = time.time() - start_time
     m, s = divmod(elapsed, 60)
