@@ -133,9 +133,12 @@ def _process_lp(
     fee_1_m2m = fee_1_raw
 
     inv_value_init = inv0[0] * current_price[0] + inv1[0]
-    inv_value_term = (
-        inv0[-1] * current_price[-1] + inv1[-1]
-    )  # if pos has liq[-1] == 0.0 (or really <=cut_off ...), bc they've terminated, then this won't give us what we we're looking for.
+    if len(inv0) > 1:
+        inv_value_term = inv0[-2] * current_price[-1] + inv1[-2]
+    else:
+        inv_value_term = inv0[-1] * current_price[-1] + inv1[-1]
+
+    # if pos has liq[-1] == 0.0 (or really <=cut_off ...), bc they've terminated, then this won't give us what we we're looking for.
     # stylized cases:
     # *stays alive case*:
     # one mint:         [100 100 100 100 100 ... 100 100 100]
@@ -163,18 +166,18 @@ def _process_lp(
     # (n-2)^th seg: liq_val[-2] x [liq_idx[-2],liq_idx[-1])
     # (n-1)^th seg: liq_val[-1] x [liq_idx[-1],*** liq_idx[-1] OR T ****)
     # each of duration atleast 1 (liq_idx[i+1]>=liq_idx[i]+1) except maybe the last one.
-
-    fee_value_term = fee0[-1] * current_price[-1] + inv1[-1]
+    #
+    fee_value_term = fee_0_raw * current_price[-1] + fee_1_raw
     value_if_held = inv0[0] * current_price[-1] + inv1[0]
 
-    if inv_value_init > 0:
-        roi = (inv_value_term + fee_value_term) / inv_value_init - 1
-    else:
-        roi = 0
-    if value_if_held > 0:
-        imp_loss = (inv_value_term + fee_value_term) / value_if_held
-    else:
-        imp_loss = 0
+    roi = (inv_value_term + fee_value_term) / inv_value_init - 1
+
+    imp_loss = (inv_value_term + fee_value_term) / value_if_held
+
+    if col[0] == "0x0b4c4ea418cd596b1204c0dd07e419707149c7c6":
+        assert False
+
+    assert inv0[0] > 0 or inv1[0] > 0
 
     data = {
         f"lp_tuple": str(col),
@@ -241,22 +244,27 @@ def compute_inventory_and_fees_parallel(
         #   1. the comparison liq_val[-1] ==0.0 should be something more like np.isclose(liq_val[-1],0.0).
         #   2. there's also the probably super rare edge case in which one burns a position then later mints same pos.
         cut_off = 1e4
-        last_alive_idx = liq_idx[-1] if liq_val[-1] <= cut_off else last_evt_idx
+        assert liq_val[0] > 0
+        if len(liq_idx) > 1:
+            last_alive_idx = liq_idx[-1] if liq_val[-1] <= cut_off else last_evt_idx
+        else:
+            last_alive_idx = last_evt_idx
 
-        liquidity = np.zeros(last_alive_idx - first_alive_idx + 1)
-
+        liquidity = np.repeat(liq_val[0], (last_alive_idx - first_alive_idx + 1))
         N = len(liq_idx)
-        i = 0
-        start = 0
-        stop = liq_idx[1] - liq_idx[0] if N > 1 else 0
-        while i < N:
-            liquidity[start:stop] = liq_val[i]
-            i += 1
-            start = stop
-            if i < N - 1:
-                stop += liq_idx[i + 1] - liq_idx[i]
-            elif liq_val[-1] > cut_off:
-                liquidity[stop:] = liq_val[-1]
+        if N > 1:
+            i = 0
+            start = 0
+            stop = liq_idx[1] - liq_idx[0] if N > 1 else 0
+            while i < N:
+                liquidity[start:stop] = liq_val[i]
+                i += 1
+                start = stop
+                if i < N - 1:
+                    stop += liq_idx[i + 1] - liq_idx[i]
+                elif liq_val[-1] > cut_off:
+                    # whether or not we should fill the remaining
+                    liquidity[stop:] = liq_val[-1]
 
         # index into the vectors over the lifetime of the pos:
 
