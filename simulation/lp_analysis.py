@@ -143,6 +143,8 @@ def _process_lp(
     total_value_burned = 0
     total_time = 0
     avg_roi = 0
+    fee_roi = 0
+    inv_roi = 0
     avg_il = 0
     N = len(liq_val)
     for i, val in enumerate(liq_val):
@@ -186,14 +188,18 @@ def _process_lp(
             time_this_period = max(time_this_period, 1)
             # ROI THIS PERIOD
             value_at_start = inv0[start] * current_price[start] + inv1[start]
-
-            value_at_end = (
-                (inv0[stop - 1] + np.sum(fee0[start:stop])) * current_price[stop - 1]
-                + inv1[stop - 1]
+            inv_value_at_end = (
+                inv0[stop - 1] * current_price[stop - 1] + inv1[stop - 1]
+                if stop > start
+                else value_at_start
+            )
+            fee_value_at_end = (
+                np.sum(fee0[start:stop]) * current_price[stop - 1]
                 + np.sum(fee1[start:stop])
                 if stop > start
                 else value_at_start
             )
+            value_at_end = inv_value_at_end + fee_value_at_end  #
             roi_this_period = value_at_end / value_at_start - 1
             avg_roi += (
                 roi_this_period * time_this_period
@@ -206,6 +212,8 @@ def _process_lp(
 
             avg_il += il_this_period * time_this_period  # ...
 
+            fee_roi += fee_value_at_end / value_at_start * time_this_period
+            inv_roi += inv_value_at_end / value_at_start * time_this_period
             #######
 
     total_unclaimed_value = (
@@ -215,8 +223,10 @@ def _process_lp(
 
     avg_roi *= 1 / total_time
     avg_il *= 1 / total_time
+    fee_roi *= 1 / total_time
+    inv_roi *= 1 / total_time
 
-    vol_in_range = np.std(current_price[~np.isclose(inv0_diff, 0)])
+    # vol_in_range = np.std(current_price[~np.isclose(inv0_diff, 0)])
 
     assert inv0[0] > 0 or inv1[0] > 0
 
@@ -252,10 +262,12 @@ def _process_lp(
         f"liq_val": liq_val,
         "roi_time_weighted": avg_roi,
         "il_time_weighted": avg_il,
+        "fee_roi": fee_roi,
+        "inv_roi": inv_roi,
         "price_apprec": current_price[-1] / current_price[0],
         "price_vol": np.std(current_price),
         "roi_raw": roi_crude,
-        "vol_in_range": vol_in_range,
+        # "vol_in_range": vol_in_range,
     }
     return data
 
