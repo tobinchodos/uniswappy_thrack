@@ -5,6 +5,8 @@ import time
 from multiprocessing import Pool, cpu_count
 import pathlib
 
+LIQUIDITY_CUTOFF = 1e4
+
 
 def load_and_preprocess(filepath: str, n_rows: int) -> pd.DataFrame:
     print(f"Loading {filepath}...")
@@ -21,7 +23,7 @@ def load_and_preprocess(filepath: str, n_rows: int) -> pd.DataFrame:
         "evt_block_time",
         "pool_liquidity",
     ]
-    if n_rows:
+    if n_rows is not None:
         df = pd.read_csv(filepath, usecols=required_columns, nrows=n_rows)
     else:
         df = pd.read_csv(filepath, usecols=required_columns)
@@ -78,6 +80,8 @@ def _process_lp(
     last_alive_idx,
     liq_idx,
     liq_val,
+    last_evt_idx,
+    evt_block_time,
 ):
     """Compute inventory + fees for a single LP."""
     # is the position alive? liquidity>0
@@ -101,28 +105,7 @@ def _process_lp(
         cond_1, inv1_diff, 0
     )
 
-    # Contention:
-    #  volume = (fee0 * price + fee1) / (fee_rate / (1 - fee_rate))
-
-    # sum of absolute diffs on inventories
-    # sum of continuously M2M'd fees
-    # amount of time alive
-    # amount of time in range
-    # entry,exit time
-    #
     # --- ROI, IL, ETC ---
-    # suppose lp_i deposits inv_0 := (inv0_0,inv1_0) at time t=t_0
-    # inv(t) := (inv0(t),inv1(t)) # trading tokens owned at time t.
-    # fees(t) := (fee0(t),fee1(t)) # total fees earned over [t_0,t]
-    # total_value(t) := inv_value(t) + fee_value(t), where
-    # inv_value(t) := value(inv(t),t)
-    # fee_value(t) := value(fees(t),t)
-    # where
-    # value((x,y),t) := x * p(t) + y
-    #
-    # ROI(t) = total_value(t)/total_value(0) - 1
-    # IL(t) = total_value(t)/value_if_held(t)
-    # where value_if_held(t) = x_0*p(t)+y_0
     #
     #
     fee_0_raw = np.sum(fee0)
@@ -132,32 +115,18 @@ def _process_lp(
     fee_0_m2m = fee_0_raw * current_price[-1]
     fee_1_m2m = fee_1_raw
 
-    inv_value_init = inv0[0] * current_price[0] + inv1[0]
-    if len(inv0) > 1:
-        inv_value_term = inv0[-2] * current_price[-1] + inv1[-2]
-    else:
-        inv_value_term = inv0[-1] * current_price[-1] + inv1[-1]
-
-    # if pos has liq[-1] == 0.0 (or really <=cut_off ...), bc they've terminated, then this won't give us what we we're looking for.
-    # stylized cases:
-    # *stays alive case*:
-    # one mint:         [100 100 100 100 100 ... 100 100 100]
-    # multiple liq ops: [100 100 50 60 60 70 ... 300  20 500]
-    # *fully burns case*: (inv[-1] = (0,0))
-    # one mint:         [100 100 100 0]
-    # multiple liq ops: [100 100 50 60 60 70 ... 300  0]
     #
-    # two issues: first: if you fully burn, your inv at terminal time is 0... no good
-    # second: if you have multiple liq ops, your ROI & IL computations must be averaged over the constant liquidity segments - more messing around.
-    #
-    # # # #:
     #
     # [100] [150] --> [150]
     # [ 10] [ 30] --> [40]
     # roi_0 = 10/100 = 0.1
     # roi_1 = 30/150 = 0.2
+    #
     # total = 40/150 = 4/15 approx 26%
-    # roi_T = total_fees / total_ever_added
+    # periodized = 13%
+    # difference = convexity
+    # time weighted roi = 15%
+    #
     #
     # a pos' lifetime is broken into n>=1 segments of "constant investment":
     # 0^th segment: liq_val[0] x [liq_idx[0],liq_idx[1])
@@ -166,19 +135,94 @@ def _process_lp(
     # (n-2)^th seg: liq_val[-2] x [liq_idx[-2],liq_idx[-1])
     # (n-1)^th seg: liq_val[-1] x [liq_idx[-1],*** liq_idx[-1] OR T ****)
     # each of duration atleast 1 (liq_idx[i+1]>=liq_idx[i]+1) except maybe the last one.
+    ##
+    # liq_idx = [10, 1992, 4546] offset = 10
+    # liq_val = [10**16,0,10**5]
+    # last_evt_idx = 499999
     #
-    fee_value_term = fee_0_raw * current_price[-1] + fee_1_raw
-    value_if_held = inv0[0] * current_price[-1] + inv1[0]
+    total_value_burned = 0
+    total_time = 0
+    avg_roi = 0
+    avg_il = 0
+    N = len(liq_val)
+    for i, val in enumerate(liq_val):
+        if i == 0:
+            total_value_added = inv0[0] * current_price[0] + inv1[0]
+        else:
+            idx = liq_idx[i] - liq_idx[0]
+            if liq_val[i] > liq_val[i - 1]:  # increase in liq
+                # i.e., event_df.event.iloc[liq_idx[i]] == 'mint'
+                total_value_added += inv0[idx] * current_price[idx] + inv1[idx]
 
-    roi = (inv_value_term + fee_value_term) / inv_value_init - 1
+            elif liq_val[i] < liq_val[i - 1]:  # decrease in liq
+                # total_value_burned += (
+                #     (inv0[liq_idx[i - 1] - liq_idx[0]] - inv0[idx]) * current_price[idx]
+                #     + inv1[liq_idx[i - 1] - liq_idx[0]]
+                #     - inv1[idx]
+                # )
+                assert idx > 0  # should be true if liq_idx strictly increasing.
+                total_value_burned += (
+                    (inv0[idx - 1] - inv0[idx]) * current_price[idx]
+                    + inv1[idx - 1]
+                    - inv1[idx]
+                )
+                # i.e., event_df.event.iloc[liq_idx[i]] == 'burn' and
 
-    imp_loss = (inv_value_term + fee_value_term) / value_if_held
+        if i == 0 or (val > LIQUIDITY_CUTOFF):
 
-    if col[0] == "0x0b4c4ea418cd596b1204c0dd07e419707149c7c6":
-        assert False
+            # you must be at the beginning of a new period of positive liquidity. first mint can have liq_val < liq_cutoff.
+            start = liq_idx[i] - liq_idx[0]
+            # when does the next period start (or terminal time)... interested in [start,stop)
+            stop = liq_idx[i + 1] - liq_idx[0] if i < N - 1 else len(liquidity)
+
+            # - time_this_period
+            # - want roi this period
+            # - want il this period
+
+            # TIME THIS PERIOD (SECONDS)
+            time_this_period = (
+                evt_block_time[stop - 1] - evt_block_time[start]
+            ).item() / 10**9
+            time_this_period = max(time_this_period, 1)
+            # ROI THIS PERIOD
+            value_at_start = inv0[start] * current_price[start] + inv1[start]
+
+            value_at_end = (
+                (inv0[stop - 1] + np.sum(fee0[start:stop])) * current_price[stop - 1]
+                + inv1[stop - 1]
+                + np.sum(fee1[start:stop])
+                if stop > start
+                else value_at_start
+            )
+            roi_this_period = value_at_end / value_at_start - 1
+            avg_roi += (
+                roi_this_period * time_this_period
+            )  # TIME WEIGHTED AVERAGE, ROR ON token1 INVESTED PER SECOND...
+            total_time += time_this_period
+            # IMPERMANENT LOSS THIS PERIOD
+            # VALUE VS VALUE IF HELD
+            value_if_held = inv0[start] * current_price[stop - 1] + inv1[start]
+            il_this_period = value_at_end / value_if_held
+
+            avg_il += il_this_period * time_this_period  # ...
+
+            #######
+
+    total_unclaimed_value = (
+        inv0[-1] * current_price[-1] + inv1[-1] + fee_0_cm2m + fee_1_cm2m
+    )
+    roi_crude = (total_unclaimed_value + total_value_burned) / total_value_added
+
+    avg_roi *= 1 / total_time
+    avg_il *= 1 / total_time
+
+    vol_in_range = np.std(current_price[~np.isclose(inv0_diff, 0)])
 
     assert inv0[0] > 0 or inv1[0] > 0
 
+    dt = np.diff(evt_block_time, 1, prepend=evt_block_time[0])
+
+    time_in_range = np.sum(dt[np.abs(inv0_diff) != 0])
     data = {
         f"lp_tuple": str(col),
         f"inv_0_abs_diff": np.sum(np.abs(inv0_diff)),
@@ -192,20 +236,26 @@ def _process_lp(
         f"total_fee_CM2M": fee_0_cm2m + fee_1_cm2m,  # price*tok0 + tok1
         f"total_fee_M2M": fee_0_m2m + fee_1_m2m,
         f"volume": np.sum(volume),  # no new info, see fees.
-        f"lifetime": len(liquidity),
+        f"lifetime_hours": max(
+            (evt_block_time[-1] - evt_block_time[0]).item() / 10**9, 1
+        )
+        / 3600,
         f"in_range": np.count_nonzero(
             inv0_diff
         ),  # inv0_diff is subject to numerical error,(cancellation)
+        "time_in_range": (time_in_range.item() / 10**9) / 3600,
         f"first_alive_idx": first_alive_idx,
         f"last_alive_idx": last_alive_idx,
         f"avg_liq": np.mean(liquidity),
         f"final_liq": liquidity[-1],
         f"liq_idx": liq_idx,
         f"liq_val": liq_val,
-        "roi": roi,
-        "imp_loss": imp_loss,
+        "roi_time_weighted": avg_roi,
+        "il_time_weighted": avg_il,
         "price_apprec": current_price[-1] / current_price[0],
         "price_vol": np.std(current_price),
+        "roi_raw": roi_crude,
+        "vol_in_range": vol_in_range,
     }
     return data
 
@@ -229,6 +279,7 @@ def compute_inventory_and_fees_parallel(
     cond_1 = np.logical_and(swaps_logical, (amount_1 > 0))
     fee_rate = df.iloc[0].fee_rate / 10**6
     last_evt_idx = df.index[-1]
+    evt_block_time = df.evt_block_time.values
 
     # np.random.shuffle(lp_cols)
     for i, col in enumerate(lp_cols):
@@ -243,10 +294,11 @@ def compute_inventory_and_fees_parallel(
         # last idx: NOTE: this last_alive_idx method is not fool proof.
         #   1. the comparison liq_val[-1] ==0.0 should be something more like np.isclose(liq_val[-1],0.0).
         #   2. there's also the probably super rare edge case in which one burns a position then later mints same pos.
-        cut_off = 1e4
         assert liq_val[0] > 0
         if len(liq_idx) > 1:
-            last_alive_idx = liq_idx[-1] if liq_val[-1] <= cut_off else last_evt_idx
+            last_alive_idx = (
+                liq_idx[-1] if liq_val[-1] <= LIQUIDITY_CUTOFF else last_evt_idx
+            )
         else:
             last_alive_idx = last_evt_idx
 
@@ -262,7 +314,7 @@ def compute_inventory_and_fees_parallel(
                 start = stop
                 if i < N - 1:
                     stop += liq_idx[i + 1] - liq_idx[i]
-                elif liq_val[-1] > cut_off:
+                elif liq_val[-1] > LIQUIDITY_CUTOFF:
                     # whether or not we should fill the remaining
                     liquidity[stop:] = liq_val[-1]
 
@@ -271,6 +323,7 @@ def compute_inventory_and_fees_parallel(
         _current_price = current_price[first_alive_idx : last_alive_idx + 1]
         _cond_0 = cond_0[first_alive_idx : last_alive_idx + 1]
         _cond_1 = cond_1[first_alive_idx : last_alive_idx + 1]
+        _evt_block_time = evt_block_time[first_alive_idx : last_alive_idx + 1]
         # _liquidity =
 
         low_price = 1.0001 ** col[1]
@@ -289,6 +342,8 @@ def compute_inventory_and_fees_parallel(
                 last_alive_idx,
                 liq_idx,
                 liq_val,
+                last_evt_idx,
+                _evt_block_time,
             )
         )
     if parallelize:
