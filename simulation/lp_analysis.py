@@ -212,8 +212,8 @@ def _process_lp(
 
             avg_il += il_this_period * time_this_period  # ...
 
-            fee_roi += fee_value_at_end / value_at_start * time_this_period
-            inv_roi += inv_value_at_end / value_at_start * time_this_period
+            fee_roi += (fee_value_at_end / value_at_start - 1) * time_this_period
+            inv_roi += (inv_value_at_end / value_at_start - 1) * time_this_period
             #######
 
     total_unclaimed_value = (
