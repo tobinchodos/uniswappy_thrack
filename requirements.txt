@@ -1,14 +1,7 @@
-# required
+pandas
 numpy
-Requests==2.31.0
-scipy==1.12.0
-termcolor==2.4.0
-UniswapPy==1.4.0
-bokeh==3.3.4
-pytest
+plotly
+matplotlib
+seaborn
+scipy
 
-# optional
-# jupyter==1.0.0
-# jupyterlab==4.1.2
-# pandas==2.0.3
-# matplotlib==3.8.3

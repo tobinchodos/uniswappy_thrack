@@ -1,152 +1,311 @@
-# THRACKLE FORK 
-# Notes from Thrackle implementation
-1. To achieve a working editable install, use the command: 
+This project's purpose is to take a v3-style pool's sequence of events (mints/swaps/burns) and analyze all liquidity positions. In plain language, the primary use case goes like this:
 
-pip install -e . --config-settings editable_mode=strict
+- you pick a token pair, say WETH-USDC
+- find a V3-style pool and fee tiers, say 0.03% (high) and 0.005% (low)
+- for both tiers, you download the events data (say from Dune via the query below) from the beginning of the pool's lifetime to some stopping period (like number of events = 500k or 1 year's worth of events).
+- run the command:
+  $python simulation/lp_analysis_multipool.py --files <path_to_your_low_fee_events.csv> <path_to_your_high_fee_events.csv> --output=True --parallel=False
 
-# UniswapPy: Uniswap V2 / V3 Analytics with Python
+You will get two output files from the above which hold the analysis of the lp positions:
 
-This package contains python re-factors of both original Uniswap [V2](https://github.com/Uniswap/v2-core/blob/master/contracts/UniswapV2Pair.sol) and [V3](https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol)
-pairing codes, and can be utilized for the purpose of analysing and modelling its behavior for DeFi. 
+lp*analysis_output*<path_to_your_low_fee_events>.parquet
+lp_analysis_output\*<path_to_your_high_fee_events>.parquet
 
-## Docs
-Visit [docs](https://defipy.org) for full documentation with walk-through 
-tutorials
+The analysis done and output created is done according to the following:
 
-## Installation 
-```
-> git clone https://github.com/defipy-devs/uniswappy
-> pip install .
-```
-or
-```
-> pip install UniswapPy
-```
+- find the approximately common period of events for the two pools (e.g., start_date = 05/04/2021 - stop_date = 08/16/2021)
+- "integrate forward" all lp's mints/burns over the time period and calculate all lp's fees, volume, ROI, etc.
+- output a dataframe for each pool which holds the calculated lp quantities of interest over the window of time
 
-## Uniswap V2
+For example usage, see analysis.ipynb, all_pools.ipynb, etc.
 
-* See [test notebook](https://github.com/defipy-devs/uniswappy/blob/main/notebooks/tutorials/uniswap_v2.ipynb) 
-for basic usage and [tutorial](https://medium.com/coinmonks/uniswap-v2-math-tutorial-using-uniswappy-abb23cdef005) on Uniswap V2 math
+For a set of 8 event csv's (four pairs, two fee tiers each), see (https://drive.google.com/drive/folders/1axcOahumYPrMx4OyXLAe8LFLLCteibzq)
 
-```
-from uniswappy import *
+**DUNE QUERY**
 
-user_nm = 'user'
-eth_amount = 1000
-tkn_amount = 100000
+WITH
+NFTPositions AS (
+select
+chain
+, nft_manager_address
+, pool_address
+, tokenId
+, first_recipient
+, tickUpper
+, tickLower
+from dune.thrackle_team.result_uniswap_v3_nft_positions T
+where chain = 'ethereum'
+and pool_address = {{pool_contract}}
+),
 
-tkn = ERC20("TKN", "0x111")
-eth = ERC20("ETH", "0x09")
-exchg_data = UniswapExchangeData(tkn0 = eth, tkn1 = tkn, symbol="LP", address="0x011")
+LiquidityAdds AS (
+-- LiquidityAdd events from NFPM contract
+select
+N.chain
+, tokenId
+, N.pool_address  
+ , N.first_recipient
+, N.tickUpper
+, N.tickLower
+, L.\*
+-- , L.liquidity as amount
 
-factory = UniswapFactory("ETH pool factory", "0x2")
-lp = factory.deploy(exchg_data)
+        from (select *
+             from uniswap_v3_ethereum.nonfungiblepositionmanager_evt_increaseliquidity
+             ) L
+        left join NFTPositions N
+            using (tokenId)
+        where N.pool_address = {{pool_contract}}
 
-Join().apply(lp, user_nm, eth_amount, tkn_amount)
-lp.summary()
-```
+),
 
-#### OUTPUT:
-Exchange ETH-TKN (LP) <br/>
-Reserves: ETH = 1000, TKN = 100000 <br/>
-Liquidity: 10000.0 <br/><br/> 
+Mints AS (
+SELECT
+'mint' AS event,
+CASE
+WHEN ((L.evt_tx_hash IS NOT NULL) AND (M.evt_tx_hash IS NOT NULL))
+THEN 'pool-and-nfpm'
+WHEN L.evt_tx_hash IS NULL
+THEN 'pool'
+WHEN M.evt_tx_hash IS NULL
+THEN 'nfpm'
+ELSE
+'error'
+END AS source,
 
-```
-out = Swap().apply(lp, tkn, user_nm, 1000)
-lp.summary()
-```
+        -- Identity / tx
+        COALESCE(M.contract_address, L.pool_address)                AS pool,
+        COALESCE(M.evt_tx_hash,     L.evt_tx_hash)                  AS evt_tx_hash,
+        COALESCE(M.evt_tx_from,     L.evt_tx_from)                  AS evt_tx_from,
+        COALESCE(M.evt_index,       L.evt_index)                    AS evt_index,
+        COALESCE(M.evt_block_time,  L.evt_block_time)               AS evt_block_time,
+        COALESCE(M.evt_block_number,L.evt_block_number)             AS evt_block_number,
 
-#### OUTPUT:
-Exchange ETH-TKN (LP) <br/>
-Reserves: 990.1284196560293, TKN = 101000 <br/>
-Liquidity: 10000.0 <br/><br/> 
+        -- Amounts
+        COALESCE(M.amount,          L.liquidity)                    AS amount_lp_token,
+        COALESCE(M.amount0,         L.amount0)                      AS amount0,
+        COALESCE(M.amount1,         L.amount1)                      AS amount1,
+        COALESCE(L.tokenId,         0)                              AS tokenId,
+        COALESCE(L.first_recipient, TRY_CAST('' AS VARBINARY))      AS first_recipient,
+
+        -- CUSTOM HEURISTIC TO FIND ADVANCED USERS
+        CASE
+            -- If LiquidityAdds table has an original_recipient, prefer that
+            WHEN L.first_recipient IS NOT NULL
+              THEN L.first_recipient
+
+            -- Otherwise, if the tx target was NFPM, attribute to tx sender
+            WHEN M.evt_tx_to = 0xc36442b4a4522e871399cd717abdd847ab11fe88
+                THEN M.evt_tx_from
+
+            -- Or, if the owner field was NFPM, also attribute to tx sender
+            WHEN M.owner = 0xc36442b4a4522e871399cd717abdd847ab11fe88
+                THEN M.evt_tx_from
+
+            -- Otherwise, fall back to the owner field
+            ELSE M.owner
+        END AS liquidity_provider,
+
+        -- Raw position fields from either side
+        M.owner                                                    AS owner,
+        COALESCE(M.tickLower,        L.tickLower)                  AS tickLower,
+        COALESCE(M.tickUpper,        L.tickUpper)                  AS tickUpper,
+
+        -- Not available on mint join (placeholders)
+        NULL                                                       AS pool_liquidity,
+        TRY_CAST('' AS VARBINARY)                                  AS trader,
+        -- COALESCE(L.first_recipient, TRY_CAST('' AS VARBINARY))     AS first_recipient,
+
+        -- Sender (who called pool.swap/mint) if present on either side
+        M.sender                                                   AS sender,
+
+        -- Price state placeholders (not emitted on Mint)
+        NULL                                                       AS sqrtPriceX96,
+        NULL                                                       AS tick
+    FROM (
+        -- Mint events from Pool contract
+        select *
+        from uniswap_v3_ethereum.uniswapv3pool_evt_mint
+        where contract_address = {{pool_contract}}
+    ) M
+    -- LiquidityAdd events from NFPM contract
+    FULL OUTER JOIN LiquidityAdds L
+        ON M.evt_tx_hash = L.evt_tx_hash
+            AND M.amount = L.liquidity
+            AND M.amount0 = L.amount0
+            AND M.amount1 = L.amount1
+            AND M.contract_address = L.pool_address
+            AND L.evt_index BETWEEN M.evt_index AND M.evt_index + 6
+        -- USING (evt_tx_hash, amount, amount0, amount1, contract_address) --contract_address is pool_adddress, here we could additionally join by evt_index range
+
+),
+
+LiquidityRemovals AS (
+-- LiquidityRemoval events from NFPM contract
+select
+N.chain
+, tokenId
+, N.pool*address  
+ , N.first_recipient
+, N.tickUpper
+, N.tickLower
+, L.*
+from (select \_
+from uniswap_v3_ethereum.nonfungiblepositionmanager_evt_decreaseliquidity
+where liquidity > 0
+-- where contract_address = {{pool_contract}}
+) L
+left join NFTPositions N
+using (tokenId)
+where N.pool_address = {{pool_contract}}
+),
+
+Burns AS (
+SELECT
+'burn' AS event,
+CASE
+WHEN ((L.evt_tx_hash IS NOT NULL) AND (M.evt_tx_hash IS NOT NULL))
+THEN 'pool-and-nfpm'
+WHEN L.evt_tx_hash IS NULL
+THEN 'pool'
+WHEN M.evt_tx_hash IS NULL
+THEN 'nfpm'
+ELSE
+'error'
+END AS source,  
+ -- Identity / tx
+COALESCE(M.contract_address, L.contract_address) AS pool,
+COALESCE(M.evt_tx_hash, L.evt_tx_hash) AS evt_tx_hash,
+COALESCE(M.evt_tx_from, L.evt_tx_from) AS evt_tx_from,
+COALESCE(M.evt_index, L.evt_index) AS evt_index,
+COALESCE(M.evt_block_time, L.evt_block_time) AS evt_block_time,
+COALESCE(M.evt_block_number,L.evt_block_number) AS evt_block_number,
+
+        -- Amounts
+        COALESCE(-M.amount,        -L.liquidity)                    AS amount_lp_token,
+        COALESCE(-M.amount0,       -L.amount0)                      AS amount0,
+        COALESCE(-M.amount1,       -L.amount1)                      AS amount1,
+        COALESCE(L.tokenId,         0)                              AS tokenId,
+        COALESCE(L.first_recipient, TRY_CAST('' AS VARBINARY))      AS first_recipient,
 
 
-## Uniswap V3
+        -- CUSTOM HEURISTIC TO FIND ADVANCED USERS
+        CASE
+            -- If LiquidityAdds table has an original_recipient, prefer that
+            WHEN L.first_recipient IS NOT NULL
+              THEN L.first_recipient
 
-* See [test notebook](https://github.com/defipy-devs/uniswappy/blob/main/notebooks/tutorials/uniswap_v3.ipynb) 
-for basic usage and [tutorial](https://medium.com/coinmonks/uniswap-v3-math-tutorial-using-uniswappy-c39795d1328a) on Uniswap V3 math
+            -- Otherwise, if the tx target was NFPM, attribute to tx sender
+            WHEN M.evt_tx_to = 0xc36442b4a4522e871399cd717abdd847ab11fe88
+                THEN M.evt_tx_from
 
-```
-from uniswappy import *
+            -- Or, if the owner field was NFPM, also attribute to tx sender
+            WHEN M.owner = 0xc36442b4a4522e871399cd717abdd847ab11fe88
+                THEN M.evt_tx_from
 
-user_nm = 'user'
-eth_amount = 1000
-tkn_amount = 100000
+            -- Otherwise, fall back to the owner field
+            ELSE M.owner
+        END AS liquidity_provider,
 
-eth = ERC20("ETH", "0x09")
-tkn = ERC20("TKN", "0x111")
+        -- Raw position fields from either side
+        M.owner                                                    AS owner,
+        COALESCE(M.tickLower,        L.tickLower)                  AS tickLower,
+        COALESCE(M.tickUpper,        L.tickUpper)                  AS tickUpper,
 
-exchg_data = UniswapExchangeData(tkn0 = eth, tkn1 = tkn, symbol="LP", 
-                                   address="0x011", version = 'V3', 
-                                   tick_spacing = tick_spacing, 
-                                   fee = fee)
+        -- Not available on burn join (placeholders)
+        NULL                                                       AS pool_liquidity,
+        TRY_CAST('' AS VARBINARY)                                  AS trader,
+        TRY_CAST('' AS VARBINARY)                                  AS sender,
 
-factory = UniswapFactory("ETH pool factory", "0x2")
-lp = factory.deploy(exchg_data)
+        -- Price state placeholders (not emitted on BURN)
+        NULL                                                       AS sqrtPriceX96,
+        NULL                                                       AS tick
+    FROM (
+        -- Burn events from Pool contract
+        select *
+        from uniswap_v3_ethereum.uniswapv3pool_evt_burn
+        where contract_address = {{pool_contract}}
+            and amount > 0
+    ) M
+    -- LiquidityRemovals events from NFPM contract
+    FULL OUTER JOIN LiquidityRemovals L
+    -- USING (evt_tx_hash, amount, amount0, amount1, contract_address) --contract_address is pool_adddress, here we could additionally join by evt_index range
+        ON M.evt_tx_hash = L.evt_tx_hash
+        AND M.amount = L.liquidity
+        AND M.amount0 = L.amount0
+        AND M.amount1 = L.amount1
+        AND M.contract_address = L.pool_address
+        AND L.evt_index BETWEEN M.evt_index AND M.evt_index + 6
 
-out_v3 = Join().apply(lp, user_nm, eth_amount, tkn_amount, lwr_tick, upr_tick)
-lp.summary()
-```
+),
 
-#### OUTPUT:
-Exchange ETH-TKN (LP) <br/>
-Reserves: ETH = 1000, TKN = 100000 <br/>
-Liquidity: 10000.0 <br/><br/> 
+Swaps AS (
+SELECT
+'swap' AS event
+, NULL as source
+, S.contract_address as pool
+, S.evt_tx_hash
+, S.evt_tx_from
+, S.evt_index
+, S.evt_block_time
+, S.evt_block_number
+, NULL AS amount_lp_token
+, S.amount0
+, S.amount1
+, NULL as tokenId
+, TRY_CAST('' AS VARBINARY) AS first_recipient
+, TRY_CAST('' AS VARBINARY) AS liquidity_provider
+-- , NULL AS tokenId
+, TRY_CAST('' AS VARBINARY) AS owner
+, NULL AS tickLower
+, NULL AS tickUpper
+, S.liquidity AS pool_liquidity
+, T."from" AS trader --S.recipient
+-- , S.recipient
+, S.sender
+, S.sqrtPriceX96
+, S.tick
+FROM (
+select \*
+from uniswap_v3_ethereum.uniswapv3pool_evt_swap
+where contract_address = {{pool_contract}}
+) S
+LEFT JOIN (select hash, "from" from ethereum.transactions) T
+ON S.evt_tx_hash = T.hash
 
-```
-out = Swap().apply(lp, tkn, user_nm, 1000)
-lp.summary()
-```
+),
 
-#### OUTPUT:
-Exchange ETH-TKN (LP) <br/>
-Real Reserves: ETH = 990.1284196560293, TKN = 101000 <br/>
-Liquidity: 10000.0 <br/><br/> 
-
-
-## 0x Quant Terminal
-
-This application utilizes the 0x API to produce a mock Uniswap pool which allows end-users to stress test
-the limitations of a Uniswap pool setup using live price feeds from [0x API](https://0x.org); for backend setup, see 
-[notebook](https://github.com/defipy-devs/uniswappy/blob/main/notebooks/tutorials/quant_terminal.ipynb) 
-
-Click [dashboard.defipy.org](https://dashboard.defipy.org/) for live link; for more detail see 
-[README](https://github.com/defipy-devs/uniswappy/tree/main/python/application/quant_terminal#readme) 
-
-![plot](./doc/quant_terminal/screenshot.png)
-
-### Run application locally  
-
-```
-> bokeh serve --show python/application/quant_terminal/bokeh_server.py
-```
-
-## Special Features
- * **Abstracted Actions**: Obfuscation is removed from standard Uniswap 
-action events to help streamline analysis and lower line count; see 
-article [How to Handle Uniswap Withdrawals like an 
-OG](https://medium.com/coinmonks/handle-uniswap-withdrawals-like-an-og-389fe74be18c), 
-and [Setup your Uniswap Deposits like a 
-Baller](https://medium.com/coinmonks/setup-your-uniswap-deposits-like-a-baller-b99340ea302f)
- * **Indexing**: Can calculate settlment LP token amounts given token 
-amounts and vice versa; see article [The Uniswap Indexing 
-Problem](https://medium.com/datadriveninvestor/the-uniswap-indexing-problem-8078b8b110fc)
- * **Simulation**: Can simulate trading using Geometric Brownian Motion 
-(GBM) process, or feed in actual raw price data to analyze behavior; see 
-article [How to Simulate a Liquidity Pool for Decentralized 
-Finance](https://medium.com/@icmoore/simulating-a-liquidity-pool-for-decentralized-finance-6f357ec8564b)
- * **Randomized Events**: Token amount and time delta models to simulate 
-possible trading behavior
- * **Analytical Tools**: Basic yeild calculators and risk tools to assist 
-in analyzing outcomes; see 
-article [How to Simulate a Uniswap V3 Order Book in Python](https://medium.com/datadriveninvestor/how-to-simulate-a-uniswap-v3-order-book-in-python-149480d12305)
-
-If you find this package helpful, please leave a ⭐!
-
-## License
-Licensed under the Apache License, Version 2.0.  
-See [LICENSE](./LICENSE) and [NOTICE](./NOTICE) for details.  
-Portions of this project may include code from third-party projects under compatible open-source licenses.
- 
-
+Combined AS (
+select _ from Burns
+UNION ALL
+select _ from Mints
+UNION ALL
+select \* from Swaps
+)
+select
+S.event
+, S.source
+, S.evt_tx_hash
+, S.evt_index
+, S.evt_block_time
+, S.evt_block_number
+, CAST(S.amount_lp_token AS VARCHAR) AS amount_lp_token
+, CAST(S.amount0 AS VARCHAR) AS amount0
+, CAST(S.amount1 AS VARCHAR) AS amount1
+, S.tokenId
+, S.first_recipient
+, S.liquidity_provider
+-- , S.owner
+, S.tickLower
+, S.tickUpper
+, CAST(S.pool_liquidity AS VARCHAR) AS pool_liquidity
+, S.trader
+-- , S.recipient
+-- , S.sender
+, S.sqrtPriceX96
+, S.tick
+from Combined S
+-- INNER JOIN Pool P ON S.contract_address = P.pool
+-- LEFT JOIN NFTTransfers N ON N.amount_lp_token_abs = abs(S.amount_lp_token)
+order by S.evt_block_number ASC, S.evt_index
+LIMIT 500000
